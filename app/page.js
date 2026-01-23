@@ -2,23 +2,34 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Trophy, Users, BookOpen, ChevronDown, Search, PlusCircle, Settings, Link, RefreshCw, AlertCircle, CheckCircle2, BarChart3 } from 'lucide-react';
 
-// --- 設定：班級專屬背景色票 (柔和色系) ---
+// --- 設定：班級專屬背景色票 (更鮮明的區隔) ---
+// 順序：1.淡藍 2.黃色 3.綠色 4.灰色 5.橙色
 const CLASS_BG_COLORS = [
-  'bg-red-50', 'bg-orange-50', 'bg-amber-50', 'bg-yellow-50', 'bg-lime-50',
-  'bg-green-50', 'bg-emerald-50', 'bg-teal-50', 'bg-cyan-50', 'bg-sky-50',
-  'bg-blue-50', 'bg-indigo-50', 'bg-violet-50', 'bg-purple-50', 'bg-fuchsia-50',
-  'bg-pink-50', 'bg-rose-50', 'bg-slate-100', 'bg-gray-100', 'bg-stone-100'
+  'bg-blue-100',   // 尾數 1, 6
+  'bg-yellow-100', // 尾數 2, 7
+  'bg-green-100',  // 尾數 3, 8
+  'bg-gray-100',   // 尾數 4, 9
+  'bg-orange-100'  // 尾數 5, 0
 ];
 
-// 輔助：根據班級名稱產生固定的顏色
+// 輔助：根據班級名稱數字決定顏色 (5色循環)
 const getClassColor = (className) => {
   if (!className) return 'bg-white';
-  let hash = 0;
-  const str = String(className);
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const index = Math.abs(hash) % CLASS_BG_COLORS.length;
+  
+  // 嘗試取出數字 (例如 "701" -> 701)
+  const num = parseInt(String(className).replace(/\D/g, ''), 10);
+  
+  // 如果沒有數字，回傳白色
+  if (isNaN(num)) return 'bg-white';
+
+  // 取餘數決定顏色索引 (0~4)
+  // 餘數 1 -> Index 0 (藍)
+  // 餘數 2 -> Index 1 (黃)
+  // ...
+  // 餘數 0 -> Index 4 (橙)
+  const mod = num % 5;
+  const index = mod === 0 ? 4 : mod - 1;
+  
   return CLASS_BG_COLORS[index];
 };
 
