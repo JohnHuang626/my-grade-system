@@ -50,7 +50,8 @@ const processGrades = (student) => {
 
 export default function DynamicGradeSystem() {
   // --- 狀態控制 ---
-  const [googleScriptUrl, setGoogleScriptUrl] = useState('');
+  // 設定預設連線網址，方便老師直接使用
+  const [googleScriptUrl, setGoogleScriptUrl] = useState('https://script.google.com/macros/s/AKfycbx4qB7LEhkOnPJZ9dvuR9TGzKlI4OL6-zVcCi_Bgzw5fxBGKd1D6kdJW1qheB0Ghiqi/exec');
   const [isLoading, setIsLoading] = useState(false);
   const [isConfigLoading, setIsConfigLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -110,7 +111,8 @@ export default function DynamicGradeSystem() {
       setSuccessMsg('已成功連線並同步 Master Sheet 設定！');
     } catch (err) {
       console.error('Config Fetch Error:', err);
-      setErrorMsg('連線成功，但無法讀取設定 (可能是 Master Sheet 缺少 Exam_Settings 分頁，將使用預設清單)');
+      // 靜默失敗或只顯示輕微警告，因為預設網址通常是對的，可能是還沒設定好 Sheet
+      // setErrorMsg('連線成功，但無法讀取設定 (可能是 Master Sheet 缺少 Exam_Settings 分頁，將使用預設清單)');
     } finally {
       setIsConfigLoading(false);
     }
@@ -167,10 +169,18 @@ export default function DynamicGradeSystem() {
     if (googleScriptUrl && !isLoading) {
       const hasData = database[currentExam] && database[currentExam].length > 0;
       if (!hasData) {
+        // 如果是剛載入且有預設網址，這會觸發第一次抓取
         fetchLiveData(currentExam);
       }
     }
   }, [currentExam, googleScriptUrl, isLoading, database, fetchLiveData]);
+
+  // 初始化設定：如果有預設網址，元件掛載後自動嘗試抓取設定 (考試清單等)
+  useEffect(() => {
+    if (googleScriptUrl) {
+      fetchSettings(googleScriptUrl);
+    }
+  }, [fetchSettings, googleScriptUrl]);
 
   // --- 運算邏輯 ---
   const currentData = useMemo(() => database[currentExam] || [], [database, currentExam]);
