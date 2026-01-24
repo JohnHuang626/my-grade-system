@@ -104,22 +104,20 @@ export default function DynamicGradeSystem() {
       if (examList.length > 0) {
         setSuccessMsg('已連線，正在搜尋最新考試記錄...');
         
-        // 輔助：檢查某個 Exam ID 是否有"真實"成績 (排除只有名單但沒分數的情況)
+        // 輔助：檢查某個 Exam ID 是否有"真實"成績
         const checkData = async (id) => {
            try {
              const r = await fetch(`${url}${url.includes('?')?'&':'?'}exam=${id}&t=${Date.now()}`, {method: 'GET', mode: 'cors', redirect:'follow'});
              const j = await r.json();
              
              if (Array.isArray(j) && j.length > 0) {
-               // [關鍵修正]：檢查是否有任何一科不是空白字串
-               // 只要有一個學生的任一科有填值 (包含0分)，就視為該次考試已開始
+               // 檢查是否有任何一科不是空白字串
                const hasRealScores = j.some(student => {
                  const subjects = ['chi', 'eng', 'math', 'sci', 'geo', 'hist', 'civ'];
                  return subjects.some(sub => student[sub] !== "" && student[sub] !== undefined && student[sub] !== null);
                });
 
                if (hasRealScores) {
-                 // 有真實分數才存入 database
                  setDatabase(prev => ({ ...prev, [id]: j }));
                  return true;
                }
@@ -130,24 +128,23 @@ export default function DynamicGradeSystem() {
 
         let low = 0;
         let high = examList.length - 1;
-        let bestIndex = 0; // 預設顯示第一個
+        let bestIndex = 0; 
 
-        // 先檢查最後一個，如果連最後一個都有分數，那就直接選它
+        // 先檢查最後一個
         const lastHasData = await checkData(examList[high].id);
         if (lastHasData) {
           bestIndex = high;
         } else {
-          // 二分搜尋法 (找最後一個有資料的點)
-          // 邏輯：我們要找的是 True, True, [True], False, False 的邊界
+          // 二分搜尋法
           while (low <= high) {
             const mid = Math.floor((low + high) / 2);
             const hasData = await checkData(examList[mid].id);
             
             if (hasData) {
-              bestIndex = mid; // 這個有分，暫存為最佳解
-              low = mid + 1;   // 試試看後面還有沒有更新的
+              bestIndex = mid;
+              low = mid + 1;
             } else {
-              high = mid - 1;  // 這個沒分，往前面找
+              high = mid - 1;
             }
           }
         }
@@ -207,7 +204,7 @@ export default function DynamicGradeSystem() {
     if (url && url.includes('script.google.com')) fetchSettings(url);
   };
 
-  // 監聽：切換考試時自動抓取 (若資料庫無資料)
+  // 監聽：切換考試時自動抓取
   useEffect(() => {
     if (googleScriptUrl && !isLoading && currentExam) {
       const hasData = database[currentExam] && database[currentExam].length > 0;
@@ -217,14 +214,14 @@ export default function DynamicGradeSystem() {
     }
   }, [currentExam, googleScriptUrl, isLoading, database, fetchLiveData]);
 
-  // 初始化：元件掛載後自動連線
+  // 初始化
   useEffect(() => {
     if (googleScriptUrl) {
       fetchSettings(googleScriptUrl);
     }
   }, [fetchSettings, googleScriptUrl]);
 
-  // 切換模式重設班級 (僅在切換回全校總榜時)
+  // 切換模式重設班級
   useEffect(() => {
     if (viewMode === 'school') {
       setSelectedClass('All');
@@ -389,7 +386,7 @@ export default function DynamicGradeSystem() {
         .print-header { display: none; }
       `}</style>
 
-      {/* 導覽列 (列印時隱藏) */}
+      {/* 導覽列 */}
       <nav className="bg-slate-800 text-white sticky top-0 z-20 shadow-lg no-print">
         <div className="max-w-6xl mx-auto px-4 h-16 flex justify-between items-center">
           <div className="flex items-center gap-2">
@@ -447,7 +444,7 @@ export default function DynamicGradeSystem() {
         </div>
       </nav>
 
-      {/* --- 控制面板 (密碼保護) --- */}
+      {/* 控制面板 */}
       {showAdminPanel && (
         <div className="bg-white border-b-4 border-emerald-500 mb-6 shadow-sm animate-in slide-in-from-top-4 duration-500 no-print">
           <div className="max-w-6xl mx-auto p-6">
@@ -650,11 +647,14 @@ export default function DynamicGradeSystem() {
                   <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell">數學</th>
                   <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell">自然</th>
                   <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell text-blue-600">社會(均)</th>
+                  <th className="px-4 py-3 text-right hidden lg:table-cell print:table-cell text-slate-500">地理</th>
+                  <th className="px-4 py-3 text-right hidden lg:table-cell print:table-cell text-slate-500">歷史</th>
+                  <th className="px-4 py-3 text-right hidden lg:table-cell print:table-cell text-slate-500">公民</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 print:divide-gray-300">
                 {displayData.map((student, idx) => {
-                  const rank = viewMode === 'school' ? student.schoolRank : (idx + 1); 
+                  const rank = viewMode === 'school' ? student.schoolRank : (idx + 1); // 簡化班排顯示
                   const rowBg = getClassColor(student.class);
                   return (
                     <tr key={`${student.class}-${student.seat}`} className={`${rowBg} hover:brightness-95 transition-all print:break-inside-avoid`}>
@@ -673,6 +673,9 @@ export default function DynamicGradeSystem() {
                       <td className="px-4 py-3 text-right text-slate-400 hidden sm:table-cell print:table-cell print:text-black">{student.math}</td>
                       <td className="px-4 py-3 text-right text-slate-400 hidden sm:table-cell print:table-cell print:text-black">{student.sci}</td>
                       <td className="px-4 py-3 text-right text-blue-600 font-bold hidden sm:table-cell print:table-cell print:text-black">{student.social}</td>
+                      <td className="px-4 py-3 text-right text-slate-400 hidden lg:table-cell print:table-cell print:text-black">{student.geo}</td>
+                      <td className="px-4 py-3 text-right text-slate-400 hidden lg:table-cell print:table-cell print:text-black">{student.hist}</td>
+                      <td className="px-4 py-3 text-right text-slate-400 hidden lg:table-cell print:table-cell print:text-black">{student.civ}</td>
                     </tr>
                   );
                 })}
