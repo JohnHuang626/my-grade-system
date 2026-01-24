@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Trophy, Users, BookOpen, ChevronDown, Search, PlusCircle, Settings, Link, RefreshCw, AlertCircle, CheckCircle2, BarChart3 } from 'lucide-react';
+import { Trophy, Users, BookOpen, ChevronDown, Search, PlusCircle, Settings, Link, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Printer } from 'lucide-react';
 
 // --- 設定：班級專屬背景色票 (更鮮明的區隔) ---
 // 順序：1.淡藍 2.黃色 3.綠色 4.灰色 5.橙色
@@ -67,6 +67,11 @@ export default function DynamicGradeSystem() {
   const [currentExam, setCurrentExam] = useState('Exam1');
   const [viewMode, setViewMode] = useState('school'); // 'school' | 'class' | 'analysis'
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+
+  // --- 列印功能 ---
+  const handlePrint = () => {
+    window.print();
+  };
 
   // --- 密碼保護：切換設定面板 ---
   const handleToggleSettings = () => {
@@ -257,10 +262,58 @@ export default function DynamicGradeSystem() {
     });
   }, [processedData]);
 
+  // --- 列印標題文字 ---
+  const getPrintTitle = () => {
+    const examName = exams.find(e => e.id === currentExam)?.label || currentExam;
+    const typeName = viewMode === 'school' ? '全校總榜' : viewMode === 'class' ? '班級成績單' : '班級平均分析表';
+    return `${examName} - ${typeName}`;
+  };
+
   return (
-    <div className="min-h-screen bg-slate-100 font-sans pb-10">
-      {/* 導覽列 */}
-      <nav className="bg-slate-800 text-white sticky top-0 z-20 shadow-lg">
+    <div className="min-h-screen bg-slate-100 font-sans pb-10 print:bg-white print:pb-0">
+      {/* 動態列印樣式：根據 viewMode 決定紙張大小 */}
+      <style>{`
+        @media print {
+          @page {
+            size: ${viewMode === 'analysis' ? 'A4 portrait' : 'A3 portrait'};
+            margin: 10mm;
+          }
+          body {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            background-color: white !important;
+          }
+          /* 隱藏不想印出來的元件 */
+          .no-print { display: none !important; }
+          
+          /* 確保表格內容完整 */
+          .table-container {
+            box-shadow: none !important;
+            border: 1px solid #ddd !important;
+            overflow: visible !important;
+            max-height: none !important;
+          }
+          
+          /* 標題顯示 */
+          .print-header {
+            display: block !important;
+            text-align: center;
+            margin-bottom: 20px;
+          }
+          .print-header h1 {
+            font-size: 24px;
+            font-weight: bold;
+          }
+          .print-header p {
+            font-size: 14px;
+            color: #666;
+          }
+        }
+        .print-header { display: none; }
+      `}</style>
+
+      {/* 導覽列 (列印時隱藏) */}
+      <nav className="bg-slate-800 text-white sticky top-0 z-20 shadow-lg no-print">
         <div className="max-w-6xl mx-auto px-4 h-16 flex justify-between items-center">
           <div className="flex items-center gap-2">
             <BookOpen className="w-6 h-6 text-emerald-400" />
@@ -269,6 +322,16 @@ export default function DynamicGradeSystem() {
           </div>
           
           <div className="flex items-center gap-3">
+             {/* 列印按鈕 */}
+             <button 
+              onClick={handlePrint}
+              className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 transition-colors border border-blue-500 text-white"
+              title="列印報表 (自動設定A3/A4)"
+            >
+              <Printer className="w-3 h-3" />
+              列印
+            </button>
+
             <button 
               onClick={handleToggleSettings}
               className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded-full transition-colors border ${
@@ -276,7 +339,7 @@ export default function DynamicGradeSystem() {
               }`}
             >
               <Settings className="w-3 h-3" />
-              {showAdminPanel ? '設定' : '管理員登入'}
+              {showAdminPanel ? '設定' : '管理員'}
             </button>
             <div className="relative group">
               <select
@@ -305,9 +368,9 @@ export default function DynamicGradeSystem() {
         </div>
       </nav>
 
-      {/* --- 控制面板 (密碼保護) --- */}
+      {/* --- 控制面板 (密碼保護) - 列印時隱藏 --- */}
       {showAdminPanel && (
-        <div className="bg-white border-b-4 border-emerald-500 mb-6 shadow-sm animate-in slide-in-from-top-4 duration-500">
+        <div className="bg-white border-b-4 border-emerald-500 mb-6 shadow-sm animate-in slide-in-from-top-4 duration-500 no-print">
           <div className="max-w-6xl mx-auto p-6">
             <div className="mb-8 p-4 bg-blue-50 border border-blue-100 rounded-lg">
               <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center mb-3">
@@ -356,9 +419,15 @@ export default function DynamicGradeSystem() {
         </div>
       )}
 
+      {/* 列印專用標題區 (螢幕上隱藏) */}
+      <div className="print-header">
+        <h1>{getPrintTitle()}</h1>
+        <p>列印日期：{new Date().toLocaleDateString()}</p>
+      </div>
+
       {/* 主要內容區 */}
-      <main className="max-w-6xl mx-auto px-4">
-        <div className="flex flex-col sm:flex-row justify-between items-end mb-4 gap-2">
+      <main className="max-w-6xl mx-auto px-4 print:max-w-none print:px-0">
+        <div className="flex flex-col sm:flex-row justify-between items-end mb-4 gap-2 no-print">
            <div>
              <h2 className="text-2xl font-bold text-slate-800">
                {exams.find(e => e.id === currentExam)?.label || currentExam} 成績總表
@@ -370,15 +439,15 @@ export default function DynamicGradeSystem() {
            </div>
         </div>
 
-        {/* 頁籤切換 (Tab) */}
-        <div className="flex gap-2 mb-4 border-b border-slate-200">
+        {/* 頁籤切換 (Tab) - 列印時隱藏 */}
+        <div className="flex gap-2 mb-4 border-b border-slate-200 no-print">
            <button 
              onClick={() => setViewMode('school')}
              className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${
                viewMode === 'school' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'
              }`}
            >
-             <Trophy className="w-4 h-4" /> 全校總榜
+             <Trophy className="w-4 h-4" /> 全校總榜 (A3)
            </button>
            <button 
              onClick={() => setViewMode('class')}
@@ -386,7 +455,7 @@ export default function DynamicGradeSystem() {
                viewMode === 'class' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'
              }`}
            >
-             <Users className="w-4 h-4" /> 班級成績單
+             <Users className="w-4 h-4" /> 班級成績單 (A3)
            </button>
            <button 
              onClick={() => setViewMode('analysis')}
@@ -394,25 +463,25 @@ export default function DynamicGradeSystem() {
                viewMode === 'analysis' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-500 hover:text-slate-700'
              }`}
            >
-             <BarChart3 className="w-4 h-4" /> 班級分析 (平均)
+             <BarChart3 className="w-4 h-4" /> 班級分析 (A4)
            </button>
         </div>
 
         {/* 表格區 */}
         {isLoading ? (
-          <div className="bg-white p-12 text-center rounded-xl shadow border border-slate-200">
+          <div className="bg-white p-12 text-center rounded-xl shadow border border-slate-200 no-print">
             <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin mx-auto mb-4" />
             <p className="text-slate-600">正在從 Google Sheets 讀取各班資料...</p>
           </div>
         ) : sortedData.length === 0 ? (
-          <div className="bg-white p-12 text-center rounded-xl shadow border border-dashed border-slate-300">
+          <div className="bg-white p-12 text-center rounded-xl shadow border border-dashed border-slate-300 no-print">
             <p className="text-slate-400">目前沒有資料。<br/>請確認管理員已設定 Google Apps Script 連線網址。</p>
           </div>
         ) : viewMode === 'analysis' ? (
           /* --- 班級分析表格 --- */
-          <div className="bg-white shadow rounded-xl overflow-hidden border border-slate-200">
+          <div className="table-container bg-white shadow rounded-xl overflow-hidden border border-slate-200 print:shadow-none print:border-black">
             <table className="w-full text-sm text-left">
-              <thead className="bg-purple-50 text-purple-900 font-bold border-b border-purple-100">
+              <thead className="bg-purple-50 text-purple-900 font-bold border-b border-purple-100 print:bg-gray-100 print:text-black">
                 <tr>
                   <th className="px-4 py-3">班級</th>
                   <th className="px-4 py-3 text-right">人數</th>
@@ -423,11 +492,11 @@ export default function DynamicGradeSystem() {
                   <th className="px-4 py-3 text-right">地理(均)</th>
                   <th className="px-4 py-3 text-right">歷史(均)</th>
                   <th className="px-4 py-3 text-right">公民(均)</th>
-                  <th className="px-4 py-3 text-right bg-purple-100/50">社會科(均)</th>
-                  <th className="px-4 py-3 text-right bg-slate-100 text-slate-800">總分(均)</th>
+                  <th className="px-4 py-3 text-right bg-purple-100/50 print:bg-gray-200">社會科(均)</th>
+                  <th className="px-4 py-3 text-right bg-slate-100 text-slate-800 print:bg-gray-200">總分(均)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 print:divide-gray-300">
                 {classAnalysisData.map((cls) => {
                   const rowBg = getClassColor(cls.class);
                   return (
@@ -441,43 +510,43 @@ export default function DynamicGradeSystem() {
                       <td className="px-4 py-3 text-right text-slate-500">{cls.geo}</td>
                       <td className="px-4 py-3 text-right text-slate-500">{cls.hist}</td>
                       <td className="px-4 py-3 text-right text-slate-500">{cls.civ}</td>
-                      <td className="px-4 py-3 text-right font-bold text-purple-600 bg-purple-50/20">{cls.social}</td>
+                      <td className="px-4 py-3 text-right font-bold text-purple-600 bg-purple-50/20 print:text-black">{cls.social}</td>
                       <td className="px-4 py-3 text-right font-black text-slate-800 bg-slate-50">{cls.total}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
-            <div className="p-4 text-xs text-slate-500 bg-slate-50 border-t border-slate-200">
+            <div className="p-4 text-xs text-slate-500 bg-slate-50 border-t border-slate-200 no-print">
               * 此表顯示各班級的平均分數 (總分加總 ÷ 該班人數)。
             </div>
           </div>
         ) : (
           /* --- 原有的總榜/班級列表 --- */
-          <div className="bg-white shadow rounded-xl overflow-hidden border border-slate-200">
+          <div className="table-container bg-white shadow rounded-xl overflow-hidden border border-slate-200 print:shadow-none print:border-black">
             <table className="w-full text-sm text-left">
-              <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+              <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200 print:bg-gray-100 print:text-black">
                 <tr>
                   <th className="px-4 py-3 text-center w-16">{viewMode === 'school' ? '全校排名' : '班級排名'}</th>
                   <th className="px-4 py-3">班級</th>
                   <th className="px-4 py-3">姓名</th>
                   <th className="px-4 py-3 text-right">總分</th>
-                  <th className="px-4 py-3 text-right hidden sm:table-cell">國文</th>
-                  <th className="px-4 py-3 text-right hidden sm:table-cell">英文</th>
-                  <th className="px-4 py-3 text-right hidden sm:table-cell">數學</th>
-                  <th className="px-4 py-3 text-right hidden sm:table-cell">自然</th>
-                  <th className="px-4 py-3 text-right hidden sm:table-cell text-blue-600">社會(均)</th>
+                  <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell">國文</th>
+                  <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell">英文</th>
+                  <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell">數學</th>
+                  <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell">自然</th>
+                  <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell text-blue-600">社會(均)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 print:divide-gray-300">
                 {displayData.map((student, idx) => {
                   const rank = viewMode === 'school' ? student.schoolRank : (idx + 1); // 簡化班排顯示
                   const rowBg = getClassColor(student.class);
                   return (
-                    <tr key={`${student.class}-${student.seat}`} className={`${rowBg} hover:brightness-95 transition-all`}>
+                    <tr key={`${student.class}-${student.seat}`} className={`${rowBg} hover:brightness-95 transition-all print:break-inside-avoid`}>
                       <td className="px-4 py-3 text-center">
                         <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
-                          rank <= 3 ? 'bg-amber-100 text-amber-700' : 'bg-white/50 text-slate-500'
+                          rank <= 3 ? 'bg-amber-100 text-amber-700 print:border print:border-black' : 'bg-white/50 text-slate-500'
                         }`}>
                           {rank}
                         </span>
@@ -485,11 +554,11 @@ export default function DynamicGradeSystem() {
                       <td className="px-4 py-3 font-medium text-slate-700">{student.class}</td>
                       <td className="px-4 py-3 text-slate-600">{student.name}</td>
                       <td className="px-4 py-3 text-right font-black text-slate-800">{student.total}</td>
-                      <td className="px-4 py-3 text-right text-slate-400 hidden sm:table-cell">{student.chi}</td>
-                      <td className="px-4 py-3 text-right text-slate-400 hidden sm:table-cell">{student.eng}</td>
-                      <td className="px-4 py-3 text-right text-slate-400 hidden sm:table-cell">{student.math}</td>
-                      <td className="px-4 py-3 text-right text-slate-400 hidden sm:table-cell">{student.sci}</td>
-                      <td className="px-4 py-3 text-right text-blue-600 font-bold hidden sm:table-cell">{student.social}</td>
+                      <td className="px-4 py-3 text-right text-slate-400 hidden sm:table-cell print:table-cell print:text-black">{student.chi}</td>
+                      <td className="px-4 py-3 text-right text-slate-400 hidden sm:table-cell print:table-cell print:text-black">{student.eng}</td>
+                      <td className="px-4 py-3 text-right text-slate-400 hidden sm:table-cell print:table-cell print:text-black">{student.math}</td>
+                      <td className="px-4 py-3 text-right text-slate-400 hidden sm:table-cell print:table-cell print:text-black">{student.sci}</td>
+                      <td className="px-4 py-3 text-right text-blue-600 font-bold hidden sm:table-cell print:table-cell print:text-black">{student.social}</td>
                     </tr>
                   );
                 })}
