@@ -100,22 +100,29 @@ export default function DynamicGradeSystem() {
         setClasses(data.classes);
       }
 
-      // 2. 智慧定位：尋找「有資料」的最新考試 (Binary Search)
-      // 假設考試列表是依時間排序的 [Ex1, Ex2, ..., ExEmpty, ExEmpty]
-      // 我們要找出最後一個有資料的 index
+      // 2. 智慧定位：尋找「有實際分數」的最新考試 (Binary Search)
       if (examList.length > 0) {
         setSuccessMsg('已連線，正在搜尋最新考試記錄...');
         
-        // 輔助：檢查某個 Exam ID 是否有成績
+        // 輔助：檢查某個 Exam ID 是否有"真實"成績 (排除只有名單但沒分數的情況)
         const checkData = async (id) => {
            try {
-             // 加上時間戳記確保不讀快取
              const r = await fetch(`${url}${url.includes('?')?'&':'?'}exam=${id}&t=${Date.now()}`, {method: 'GET', mode: 'cors', redirect:'follow'});
              const j = await r.json();
+             
              if (Array.isArray(j) && j.length > 0) {
-               // 重要優化：檢查過的資料如果有東西，直接存起來，等等就不用重抓了
-               setDatabase(prev => ({ ...prev, [id]: j }));
-               return true;
+               // [關鍵修正]：檢查是否有任何一科不是空白字串
+               // 只要有一個學生的任一科有填值 (包含0分)，就視為該次考試已開始
+               const hasRealScores = j.some(student => {
+                 const subjects = ['chi', 'eng', 'math', 'sci', 'geo', 'hist', 'civ'];
+                 return subjects.some(sub => student[sub] !== "" && student[sub] !== undefined && student[sub] !== null);
+               });
+
+               if (hasRealScores) {
+                 // 有真實分數才存入 database
+                 setDatabase(prev => ({ ...prev, [id]: j }));
+                 return true;
+               }
              }
              return false;
            } catch { return false; }
@@ -125,25 +132,22 @@ export default function DynamicGradeSystem() {
         let high = examList.length - 1;
         let bestIndex = 0; // 預設顯示第一個
 
-        // 優化：先檢查最後一個 (如果不小心全都有資料，就直接選最後一個)
+        // 先檢查最後一個，如果連最後一個都有分數，那就直接選它
         const lastHasData = await checkData(examList[high].id);
         if (lastHasData) {
           bestIndex = high;
         } else {
           // 二分搜尋法 (找最後一個有資料的點)
-          // 搜尋區間 [low, high]
-          // 我們假設資料分布是 [有, 有, 有, 無, 無]
-          // 目標是找到最後一個 "有"
+          // 邏輯：我們要找的是 True, True, [True], False, False 的邊界
           while (low <= high) {
             const mid = Math.floor((low + high) / 2);
-            // 避免重複檢查已經確認沒資料的區間，但這邊簡單做即可
             const hasData = await checkData(examList[mid].id);
             
             if (hasData) {
-              bestIndex = mid; // 暫定這個是答案
-              low = mid + 1;   // 往後面找找看有沒有更新的
+              bestIndex = mid; // 這個有分，暫存為最佳解
+              low = mid + 1;   // 試試看後面還有沒有更新的
             } else {
-              high = mid - 1;  // 這個沒資料，往前面找
+              high = mid - 1;  // 這個沒分，往前面找
             }
           }
         }
@@ -151,15 +155,10 @@ export default function DynamicGradeSystem() {
         const targetExamId = examList[bestIndex].id;
         setCurrentExam(targetExamId);
         setSuccessMsg(`已連線！自動切換至最新有成績的考試：${examList[bestIndex].label}`);
-        
-        // 確保班級列表也根據抓到的資料更新
-        // (因為 checkData 已經把資料寫入 database，我們在這裡手動觸發一次班級更新比較保險)
-        // 但由於是異步 state 更新，這邊依賴 useEffect 自動處理即可
       }
 
     } catch (err) {
       console.error('Config Fetch Error:', err);
-      // 靜默失敗，避免嚇到使用者
     } finally {
       setIsConfigLoading(false);
     }
