@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Trophy, Users, BookOpen, ChevronDown, Search, PlusCircle, Settings, Link, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Printer } from 'lucide-react';
+import { Trophy, Users, BookOpen, ChevronDown, Search, PlusCircle, Settings, Link, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Printer, Filter } from 'lucide-react';
 
 // --- 設定：班級專屬背景色票 (更鮮明的區隔) ---
 // 順序：1.淡藍 2.黃色 3.綠色 4.灰色 5.橙色
@@ -66,6 +66,7 @@ export default function DynamicGradeSystem() {
   const [database, setDatabase] = useState({});
   const [currentExam, setCurrentExam] = useState('Exam1');
   const [viewMode, setViewMode] = useState('school'); // 'school' | 'class' | 'analysis'
+  const [selectedClass, setSelectedClass] = useState('All'); // 新增：目前選取的班級
   const [showAdminPanel, setShowAdminPanel] = useState(false);
 
   // --- 列印功能 ---
@@ -187,9 +188,23 @@ export default function DynamicGradeSystem() {
     }
   }, [fetchSettings, googleScriptUrl]);
 
+  // 當切換模式時，重設班級選擇 (僅當切換到不支援篩選的模式時重置，例如全校總榜)
+  // 這樣可以在「班級成績單」和「班級分析」之間切換時保留選取的班級
+  useEffect(() => {
+    if (viewMode === 'school') {
+      setSelectedClass('All');
+    }
+  }, [viewMode]);
+
   // --- 運算邏輯 ---
   const currentData = useMemo(() => database[currentExam] || [], [database, currentExam]);
   const processedData = useMemo(() => currentData.map(processGrades), [currentData]);
+
+  // 取得目前資料中所有的班級清單 (用於下拉選單)
+  const availableClasses = useMemo(() => {
+    const clsSet = new Set(processedData.map(s => String(s.class)));
+    return ['All', ...Array.from(clsSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))];
+  }, [processedData]);
 
   // 校排資料
   const sortedData = useMemo(() => {
@@ -204,6 +219,12 @@ export default function DynamicGradeSystem() {
   // 顯示資料 (校排/班排)
   const displayData = useMemo(() => {
     let data = [...sortedData];
+    
+    // 班級篩選 (如果不是選 All)
+    if (viewMode === 'class' && selectedClass !== 'All') {
+      data = data.filter(s => String(s.class) === selectedClass);
+    }
+
     if (viewMode === 'class') {
        data = data.sort((a, b) => {
          const classA = String(a.class || '');
@@ -213,9 +234,9 @@ export default function DynamicGradeSystem() {
        });
     }
     return data;
-  }, [sortedData, viewMode]);
+  }, [sortedData, viewMode, selectedClass]);
 
-  // 班級平均分析邏輯
+  // 班級平均分析邏輯 (先算出全部，再根據選取過濾)
   const classAnalysisData = useMemo(() => {
     const groups = {};
     processedData.forEach(student => {
@@ -262,10 +283,64 @@ export default function DynamicGradeSystem() {
     });
   }, [processedData]);
 
+  // 過濾後的分析資料 (用於顯示)
+  const filteredAnalysisData = useMemo(() => {
+    if (selectedClass === 'All') return classAnalysisData;
+    return classAnalysisData.filter(d => String(d.class) === selectedClass);
+  }, [classAnalysisData, selectedClass]);
+
+  // 新增：計算全年級平均 (School Average Stats)
+  const schoolAverageStats = useMemo(() => {
+    if (processedData.length === 0) return null;
+
+    const totals = {
+      count: 0,
+      chi: 0, eng: 0, math: 0, sci: 0, 
+      geo: 0, hist: 0, civ: 0, 
+      social: 0, total: 0 
+    };
+
+    processedData.forEach(student => {
+      totals.count += 1;
+      totals.chi += Number(student.chi) || 0;
+      totals.eng += Number(student.eng) || 0;
+      totals.math += Number(student.math) || 0;
+      totals.sci += Number(student.sci) || 0;
+      totals.geo += Number(student.geo) || 0;
+      totals.hist += Number(student.hist) || 0;
+      totals.civ += Number(student.civ) || 0;
+      totals.social += student.social;
+      totals.total += student.total;
+    });
+
+    const avg = (sum) => (sum / totals.count).toFixed(1);
+
+    return {
+      count: totals.count,
+      chi: avg(totals.chi),
+      eng: avg(totals.eng),
+      math: avg(totals.math),
+      sci: avg(totals.sci),
+      geo: avg(totals.geo),
+      hist: avg(totals.hist),
+      civ: avg(totals.civ),
+      social: avg(totals.social),
+      total: avg(totals.total)
+    };
+  }, [processedData]);
+
   // --- 列印標題文字 ---
   const getPrintTitle = () => {
     const examName = exams.find(e => e.id === currentExam)?.label || currentExam;
-    const typeName = viewMode === 'school' ? '全校總榜' : viewMode === 'class' ? '班級成績單' : '班級平均分析表';
+    let typeName = '';
+    if (viewMode === 'school') typeName = '全校總榜';
+    else if (viewMode === 'class') {
+      typeName = selectedClass !== 'All' ? `${selectedClass}班 成績單` : '班級成績單 (全校)';
+    }
+    else if (viewMode === 'analysis') {
+      typeName = selectedClass !== 'All' ? `${selectedClass}班 與年級平均比較表` : '各班平均分析表';
+    }
+    
     return `${examName} - ${typeName}`;
   };
 
@@ -440,7 +515,7 @@ export default function DynamicGradeSystem() {
         </div>
 
         {/* 頁籤切換 (Tab) - 列印時隱藏 */}
-        <div className="flex gap-2 mb-4 border-b border-slate-200 no-print">
+        <div className="flex flex-wrap gap-2 mb-4 border-b border-slate-200 no-print items-center">
            <button 
              onClick={() => setViewMode('school')}
              className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${
@@ -465,6 +540,26 @@ export default function DynamicGradeSystem() {
            >
              <BarChart3 className="w-4 h-4" /> 班級分析 (A4)
            </button>
+
+           {/* 新增：班級篩選選單 (現在在「班級成績單」和「班級分析」模式都會顯示) */}
+           {(viewMode === 'class' || viewMode === 'analysis') && (
+             <div className="ml-auto flex items-center gap-2 animate-in fade-in slide-in-from-left-2 duration-300">
+               <div className="relative">
+                 <Filter className="w-4 h-4 absolute left-3 top-2.5 text-emerald-600" />
+                 <select
+                   value={selectedClass}
+                   onChange={(e) => setSelectedClass(e.target.value)}
+                   className="pl-9 pr-8 py-2 bg-emerald-50 border border-emerald-200 rounded-full text-sm font-bold text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer appearance-none hover:bg-emerald-100 transition-colors"
+                 >
+                   <option value="All">顯示全部班級</option>
+                   {availableClasses.map(cls => cls !== 'All' && (
+                     <option key={cls} value={cls}>{cls} 班</option>
+                   ))}
+                 </select>
+                 <ChevronDown className="w-4 h-4 absolute right-3 top-2.5 text-emerald-600 pointer-events-none" />
+               </div>
+             </div>
+           )}
         </div>
 
         {/* 表格區 */}
@@ -497,7 +592,8 @@ export default function DynamicGradeSystem() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 print:divide-gray-300">
-                {classAnalysisData.map((cls) => {
+                {/* 使用過濾後的資料進行渲染，實現單一班級vs全校的對比 */}
+                {filteredAnalysisData.map((cls) => {
                   const rowBg = getClassColor(cls.class);
                   return (
                     <tr key={cls.class} className={`${rowBg} hover:brightness-95 transition-all`}>
@@ -516,9 +612,27 @@ export default function DynamicGradeSystem() {
                   );
                 })}
               </tbody>
+              {/* 新增：全年級平均摘要列 (永久顯示，作為比較基準) */}
+              {schoolAverageStats && (
+                <tfoot className="bg-slate-200 font-bold border-t-2 border-slate-300 print:bg-gray-100">
+                  <tr>
+                    <td className="px-4 py-3 text-slate-800 print:text-black">全年級平均</td>
+                    <td className="px-4 py-3 text-right text-slate-800 print:text-black">{schoolAverageStats.count}</td>
+                    <td className="px-4 py-3 text-right text-slate-800 print:text-black">{schoolAverageStats.chi}</td>
+                    <td className="px-4 py-3 text-right text-slate-800 print:text-black">{schoolAverageStats.eng}</td>
+                    <td className="px-4 py-3 text-right text-slate-800 print:text-black">{schoolAverageStats.math}</td>
+                    <td className="px-4 py-3 text-right text-slate-800 print:text-black">{schoolAverageStats.sci}</td>
+                    <td className="px-4 py-3 text-right text-slate-800 print:text-black">{schoolAverageStats.geo}</td>
+                    <td className="px-4 py-3 text-right text-slate-800 print:text-black">{schoolAverageStats.hist}</td>
+                    <td className="px-4 py-3 text-right text-slate-800 print:text-black">{schoolAverageStats.civ}</td>
+                    <td className="px-4 py-3 text-right text-purple-800 bg-purple-100/50 print:bg-gray-200 print:text-black">{schoolAverageStats.social}</td>
+                    <td className="px-4 py-3 text-right text-slate-900 bg-slate-200 print:bg-gray-200 print:text-black">{schoolAverageStats.total}</td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
             <div className="p-4 text-xs text-slate-500 bg-slate-50 border-t border-slate-200 no-print">
-              * 此表顯示各班級的平均分數 (總分加總 ÷ 該班人數)。
+              * 此表顯示各班級的平均分數 (總分加總 ÷ 該班人數)。全年級平均為所有學生加總 ÷ 總人數。
             </div>
           </div>
         ) : (
@@ -564,6 +678,13 @@ export default function DynamicGradeSystem() {
                 })}
               </tbody>
             </table>
+            
+            {/* 班級統計資訊 (只在班級模式且有篩選時顯示) */}
+            {viewMode === 'class' && selectedClass !== 'All' && (
+              <div className="p-4 text-xs text-slate-500 bg-slate-50 border-t border-slate-200 no-print">
+                本班級共有 {displayData.length} 位學生
+              </div>
+            )}
           </div>
         )}
       </main>
