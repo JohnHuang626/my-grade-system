@@ -15,17 +15,10 @@ const CLASS_BG_COLORS = [
 // 輔助：根據班級名稱數字決定顏色 (5色循環)
 const getClassColor = (className) => {
   if (!className) return 'bg-white';
-  
-  // 嘗試取出數字 (例如 "701" -> 701)
   const num = parseInt(String(className).replace(/\D/g, ''), 10);
-  
-  // 如果沒有數字，回傳白色
   if (isNaN(num)) return 'bg-white';
-
-  // 取餘數決定顏色索引 (0~4)
   const mod = num % 5;
   const index = mod === 0 ? 4 : mod - 1;
-  
   return CLASS_BG_COLORS[index];
 };
 
@@ -50,23 +43,19 @@ const processGrades = (student) => {
 
 export default function DynamicGradeSystem() {
   // --- 狀態控制 ---
-  // 設定預設連線網址，方便老師直接使用
   const [googleScriptUrl, setGoogleScriptUrl] = useState('https://script.google.com/macros/s/AKfycbx4qB7LEhkOnPJZ9dvuR9TGzKlI4OL6-zVcCi_Bgzw5fxBGKd1D6kdJW1qheB0Ghiqi/exec');
   const [isLoading, setIsLoading] = useState(false);
   const [isConfigLoading, setIsConfigLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  const [exams, setExams] = useState([
-    { id: 'Exam1', label: '112上-第一次段考' },
-    { id: 'Exam2', label: '112上-第二次段考' },
-  ]);
-  const [classes, setClasses] = useState([]); // 預設為空，等待讀取
+  const [exams, setExams] = useState([]);
+  const [currentExam, setCurrentExam] = useState(''); 
+  const [classes, setClasses] = useState([]); 
 
   const [database, setDatabase] = useState({});
-  const [currentExam, setCurrentExam] = useState('Exam1');
-  const [viewMode, setViewMode] = useState('school'); // 'school' | 'class' | 'analysis'
-  const [selectedClass, setSelectedClass] = useState('All'); // 新增：目前選取的班級
+  const [viewMode, setViewMode] = useState('school'); 
+  const [selectedClass, setSelectedClass] = useState('All'); 
   const [showAdminPanel, setShowAdminPanel] = useState(false);
 
   // --- 列印功能 ---
@@ -74,63 +63,112 @@ export default function DynamicGradeSystem() {
     window.print();
   };
 
-  // --- 密碼保護：切換設定面板 ---
+  // --- 密碼保護 ---
   const handleToggleSettings = () => {
     if (showAdminPanel) {
-      // 如果原本是開啟的，直接關閉
       setShowAdminPanel(false);
-      setErrorMsg(''); // 關閉時清除錯誤訊息
+      setErrorMsg(''); 
       setSuccessMsg('');
     } else {
-      // 如果原本是關閉的，要求輸入密碼
       const password = window.prompt("請輸入管理員密碼：");
       if (password === "888") {
         setShowAdminPanel(true);
-      } else if (password !== null) { // 按取消不跳警告
+      } else if (password !== null) {
         alert("密碼錯誤！");
       }
     }
   };
 
-  // --- 抓取設定 ---
+  // --- 抓取設定與自動定位最新考試 ---
   const fetchSettings = useCallback(async (url) => {
     if (!url) return;
     setIsConfigLoading(true);
     setErrorMsg('');
     try {
+      // 1. 取得考試列表
       const fetchUrl = `${url}${url.includes('?') ? '&' : '?'}action=getSettings&t=${new Date().getTime()}`;
       const response = await fetch(fetchUrl, { method: 'GET', mode: 'cors', redirect: 'follow' });
       if (!response.ok) throw new Error('讀取設定失敗');
       const data = await response.json();
       
+      let examList = [];
       if (data.exams && data.exams.length > 0) {
         setExams(data.exams);
-        // 使用 functional update 確保 currentExam 是最新的
-        setCurrentExam(prev => {
-           const currentExists = data.exams.some(e => e.id === prev);
-           return currentExists ? prev : data.exams[0].id;
-        });
+        examList = data.exams;
       }
       if (data.classes && data.classes.length > 0) {
         setClasses(data.classes);
       }
-      setSuccessMsg('已成功連線並同步 Master Sheet 設定！');
+
+      // 2. 智慧定位：尋找「有資料」的最新考試 (Binary Search)
+      // 假設考試列表是依時間排序的 [Ex1, Ex2, ..., ExEmpty, ExEmpty]
+      // 我們要找出最後一個有資料的 index
+      if (examList.length > 0) {
+        setSuccessMsg('已連線，正在搜尋最新考試記錄...');
+        
+        // 輔助：檢查某個 Exam ID 是否有成績
+        const checkData = async (id) => {
+           try {
+             // 加上時間戳記確保不讀快取
+             const r = await fetch(`${url}${url.includes('?')?'&':'?'}exam=${id}&t=${Date.now()}`, {method: 'GET', mode: 'cors', redirect:'follow'});
+             const j = await r.json();
+             if (Array.isArray(j) && j.length > 0) {
+               // 重要優化：檢查過的資料如果有東西，直接存起來，等等就不用重抓了
+               setDatabase(prev => ({ ...prev, [id]: j }));
+               return true;
+             }
+             return false;
+           } catch { return false; }
+        };
+
+        let low = 0;
+        let high = examList.length - 1;
+        let bestIndex = 0; // 預設顯示第一個
+
+        // 優化：先檢查最後一個 (如果不小心全都有資料，就直接選最後一個)
+        const lastHasData = await checkData(examList[high].id);
+        if (lastHasData) {
+          bestIndex = high;
+        } else {
+          // 二分搜尋法 (找最後一個有資料的點)
+          // 搜尋區間 [low, high]
+          // 我們假設資料分布是 [有, 有, 有, 無, 無]
+          // 目標是找到最後一個 "有"
+          while (low <= high) {
+            const mid = Math.floor((low + high) / 2);
+            // 避免重複檢查已經確認沒資料的區間，但這邊簡單做即可
+            const hasData = await checkData(examList[mid].id);
+            
+            if (hasData) {
+              bestIndex = mid; // 暫定這個是答案
+              low = mid + 1;   // 往後面找找看有沒有更新的
+            } else {
+              high = mid - 1;  // 這個沒資料，往前面找
+            }
+          }
+        }
+
+        const targetExamId = examList[bestIndex].id;
+        setCurrentExam(targetExamId);
+        setSuccessMsg(`已連線！自動切換至最新有成績的考試：${examList[bestIndex].label}`);
+        
+        // 確保班級列表也根據抓到的資料更新
+        // (因為 checkData 已經把資料寫入 database，我們在這裡手動觸發一次班級更新比較保險)
+        // 但由於是異步 state 更新，這邊依賴 useEffect 自動處理即可
+      }
+
     } catch (err) {
       console.error('Config Fetch Error:', err);
-      // 靜默失敗或只顯示輕微警告，因為預設網址通常是對的，可能是還沒設定好 Sheet
-      // setErrorMsg('連線成功，但無法讀取設定 (可能是 Master Sheet 缺少 Exam_Settings 分頁，將使用預設清單)');
+      // 靜默失敗，避免嚇到使用者
     } finally {
       setIsConfigLoading(false);
     }
   }, []); 
 
-  // --- 抓取成績資料 ---
+  // --- 抓取成績資料 (單一考試) ---
   const fetchLiveData = useCallback(async (examId) => {
     const targetUrlRaw = googleScriptUrl.trim();
-    if (!targetUrlRaw) {
-      // 如果沒有網址，不顯示錯誤，靜默返回（等待使用者設定）
-      return;
-    }
+    if (!targetUrlRaw || !examId) return;
     if (targetUrlRaw.includes('/edit')) {
       setErrorMsg('網址錯誤：請使用 /exec 結尾的部署網址');
       return;
@@ -170,26 +208,24 @@ export default function DynamicGradeSystem() {
     if (url && url.includes('script.google.com')) fetchSettings(url);
   };
 
-  // 監聽：切換考試時自動抓取 (只要有設定網址)
+  // 監聽：切換考試時自動抓取 (若資料庫無資料)
   useEffect(() => {
-    if (googleScriptUrl && !isLoading) {
+    if (googleScriptUrl && !isLoading && currentExam) {
       const hasData = database[currentExam] && database[currentExam].length > 0;
       if (!hasData) {
-        // 如果是剛載入且有預設網址，這會觸發第一次抓取
         fetchLiveData(currentExam);
       }
     }
   }, [currentExam, googleScriptUrl, isLoading, database, fetchLiveData]);
 
-  // 初始化設定：如果有預設網址，元件掛載後自動嘗試抓取設定 (考試清單等)
+  // 初始化：元件掛載後自動連線
   useEffect(() => {
     if (googleScriptUrl) {
       fetchSettings(googleScriptUrl);
     }
   }, [fetchSettings, googleScriptUrl]);
 
-  // 當切換模式時，重設班級選擇 (僅當切換到不支援篩選的模式時重置，例如全校總榜)
-  // 這樣可以在「班級成績單」和「班級分析」之間切換時保留選取的班級
+  // 切換模式重設班級 (僅在切換回全校總榜時)
   useEffect(() => {
     if (viewMode === 'school') {
       setSelectedClass('All');
@@ -200,7 +236,6 @@ export default function DynamicGradeSystem() {
   const currentData = useMemo(() => database[currentExam] || [], [database, currentExam]);
   const processedData = useMemo(() => currentData.map(processGrades), [currentData]);
 
-  // 取得目前資料中所有的班級清單 (用於下拉選單)
   const availableClasses = useMemo(() => {
     const clsSet = new Set(processedData.map(s => String(s.class)));
     return ['All', ...Array.from(clsSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))];
@@ -216,15 +251,12 @@ export default function DynamicGradeSystem() {
     });
   }, [processedData]);
 
-  // 顯示資料 (校排/班排)
+  // 顯示資料
   const displayData = useMemo(() => {
     let data = [...sortedData];
-    
-    // 班級篩選 (如果不是選 All)
     if (viewMode === 'class' && selectedClass !== 'All') {
       data = data.filter(s => String(s.class) === selectedClass);
     }
-
     if (viewMode === 'class') {
        data = data.sort((a, b) => {
          const classA = String(a.class || '');
@@ -236,18 +268,13 @@ export default function DynamicGradeSystem() {
     return data;
   }, [sortedData, viewMode, selectedClass]);
 
-  // 班級平均分析邏輯 (先算出全部，再根據選取過濾)
+  // 分析資料
   const classAnalysisData = useMemo(() => {
     const groups = {};
     processedData.forEach(student => {
       const cls = student.class;
       if (!groups[cls]) {
-        groups[cls] = { 
-          count: 0, 
-          chi: 0, eng: 0, math: 0, sci: 0, 
-          geo: 0, hist: 0, civ: 0, 
-          social: 0, total: 0 
-        };
+        groups[cls] = { count: 0, chi: 0, eng: 0, math: 0, sci: 0, geo: 0, hist: 0, civ: 0, social: 0, total: 0 };
       }
       const g = groups[cls];
       g.count += 1;
@@ -283,23 +310,15 @@ export default function DynamicGradeSystem() {
     });
   }, [processedData]);
 
-  // 過濾後的分析資料 (用於顯示)
   const filteredAnalysisData = useMemo(() => {
     if (selectedClass === 'All') return classAnalysisData;
     return classAnalysisData.filter(d => String(d.class) === selectedClass);
   }, [classAnalysisData, selectedClass]);
 
-  // 新增：計算全年級平均 (School Average Stats)
+  // 全年級平均
   const schoolAverageStats = useMemo(() => {
     if (processedData.length === 0) return null;
-
-    const totals = {
-      count: 0,
-      chi: 0, eng: 0, math: 0, sci: 0, 
-      geo: 0, hist: 0, civ: 0, 
-      social: 0, total: 0 
-    };
-
+    const totals = { count: 0, chi: 0, eng: 0, math: 0, sci: 0, geo: 0, hist: 0, civ: 0, social: 0, total: 0 };
     processedData.forEach(student => {
       totals.count += 1;
       totals.chi += Number(student.chi) || 0;
@@ -312,9 +331,7 @@ export default function DynamicGradeSystem() {
       totals.social += student.social;
       totals.total += student.total;
     });
-
     const avg = (sum) => (sum / totals.count).toFixed(1);
-
     return {
       count: totals.count,
       chi: avg(totals.chi),
@@ -329,9 +346,8 @@ export default function DynamicGradeSystem() {
     };
   }, [processedData]);
 
-  // --- 列印標題文字 ---
   const getPrintTitle = () => {
-    const examName = exams.find(e => e.id === currentExam)?.label || currentExam;
+    const examName = exams.find(e => e.id === currentExam)?.label || currentExam || '...';
     let typeName = '';
     if (viewMode === 'school') typeName = '全校總榜';
     else if (viewMode === 'class') {
@@ -340,13 +356,11 @@ export default function DynamicGradeSystem() {
     else if (viewMode === 'analysis') {
       typeName = selectedClass !== 'All' ? `${selectedClass}班 與年級平均比較表` : '各班平均分析表';
     }
-    
     return `${examName} - ${typeName}`;
   };
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans pb-10 print:bg-white print:pb-0">
-      {/* 動態列印樣式：根據 viewMode 決定紙張大小 */}
       <style>{`
         @media print {
           @page {
@@ -358,31 +372,20 @@ export default function DynamicGradeSystem() {
             print-color-adjust: exact !important;
             background-color: white !important;
           }
-          /* 隱藏不想印出來的元件 */
           .no-print { display: none !important; }
-          
-          /* 確保表格內容完整 */
           .table-container {
             box-shadow: none !important;
             border: 1px solid #ddd !important;
             overflow: visible !important;
             max-height: none !important;
           }
-          
-          /* 標題顯示 */
           .print-header {
             display: block !important;
             text-align: center;
             margin-bottom: 20px;
           }
-          .print-header h1 {
-            font-size: 24px;
-            font-weight: bold;
-          }
-          .print-header p {
-            font-size: 14px;
-            color: #666;
-          }
+          .print-header h1 { font-size: 24px; font-weight: bold; }
+          .print-header p { font-size: 14px; color: #666; }
         }
         .print-header { display: none; }
       `}</style>
@@ -397,11 +400,10 @@ export default function DynamicGradeSystem() {
           </div>
           
           <div className="flex items-center gap-3">
-             {/* 列印按鈕 */}
              <button 
               onClick={handlePrint}
               className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 transition-colors border border-blue-500 text-white"
-              title="列印報表 (自動設定A3/A4)"
+              title="列印報表"
             >
               <Printer className="w-3 h-3" />
               列印
@@ -422,18 +424,21 @@ export default function DynamicGradeSystem() {
                 onChange={(e) => setCurrentExam(e.target.value)}
                 className="appearance-none bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 pl-4 pr-10 rounded text-sm font-medium cursor-pointer focus:outline-none transition-colors"
               >
-                {exams.map(opt => (
-                  <option key={opt.id} value={opt.id}>{opt.label}</option>
-                ))}
+                {exams.length > 0 ? (
+                  exams.map(opt => (
+                    <option key={opt.id} value={opt.id}>{opt.label}</option>
+                  ))
+                ) : (
+                  <option>載入中...</option>
+                )}
               </select>
               <ChevronDown className="w-4 h-4 absolute right-2 top-2 pointer-events-none text-emerald-200" />
             </div>
-            {/* 只有在有網址時才顯示重新整理按鈕 */}
             {googleScriptUrl && (
               <button 
                 onClick={() => fetchLiveData(currentExam)}
-                disabled={isLoading}
-                className="p-1.5 bg-slate-700 rounded hover:bg-slate-600 text-emerald-400"
+                disabled={isLoading || !currentExam}
+                className="p-1.5 bg-slate-700 rounded hover:bg-slate-600 text-emerald-400 disabled:opacity-50"
                 title="重新抓取成績"
               >
                 <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
@@ -443,7 +448,7 @@ export default function DynamicGradeSystem() {
         </div>
       </nav>
 
-      {/* --- 控制面板 (密碼保護) - 列印時隱藏 --- */}
+      {/* --- 控制面板 (密碼保護) --- */}
       {showAdminPanel && (
         <div className="bg-white border-b-4 border-emerald-500 mb-6 shadow-sm animate-in slide-in-from-top-4 duration-500 no-print">
           <div className="max-w-6xl mx-auto p-6">
@@ -457,7 +462,6 @@ export default function DynamicGradeSystem() {
                    * 請在此輸入 Apps Script 部署網址以連結資料庫
                  </div>
               </div>
-              
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-blue-700">Apps Script Web App URL</label>
                 <div className="flex flex-col sm:flex-row gap-2">
@@ -494,7 +498,7 @@ export default function DynamicGradeSystem() {
         </div>
       )}
 
-      {/* 列印專用標題區 (螢幕上隱藏) */}
+      {/* 列印標題 */}
       <div className="print-header">
         <h1>{getPrintTitle()}</h1>
         <p>列印日期：{new Date().toLocaleDateString()}</p>
@@ -505,7 +509,7 @@ export default function DynamicGradeSystem() {
         <div className="flex flex-col sm:flex-row justify-between items-end mb-4 gap-2 no-print">
            <div>
              <h2 className="text-2xl font-bold text-slate-800">
-               {exams.find(e => e.id === currentExam)?.label || currentExam} 成績總表
+               {exams.find(e => e.id === currentExam)?.label || currentExam || '...'} 成績總表
              </h2>
              <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded ml-2">即時資料系統</span>
            </div>
@@ -514,7 +518,7 @@ export default function DynamicGradeSystem() {
            </div>
         </div>
 
-        {/* 頁籤切換 (Tab) - 列印時隱藏 */}
+        {/* 頁籤切換 */}
         <div className="flex flex-wrap gap-2 mb-4 border-b border-slate-200 no-print items-center">
            <button 
              onClick={() => setViewMode('school')}
@@ -541,7 +545,6 @@ export default function DynamicGradeSystem() {
              <BarChart3 className="w-4 h-4" /> 班級分析 (A4)
            </button>
 
-           {/* 新增：班級篩選選單 (現在在「班級成績單」和「班級分析」模式都會顯示) */}
            {(viewMode === 'class' || viewMode === 'analysis') && (
              <div className="ml-auto flex items-center gap-2 animate-in fade-in slide-in-from-left-2 duration-300">
                <div className="relative">
@@ -592,7 +595,6 @@ export default function DynamicGradeSystem() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 print:divide-gray-300">
-                {/* 使用過濾後的資料進行渲染，實現單一班級vs全校的對比 */}
                 {filteredAnalysisData.map((cls) => {
                   const rowBg = getClassColor(cls.class);
                   return (
@@ -612,7 +614,6 @@ export default function DynamicGradeSystem() {
                   );
                 })}
               </tbody>
-              {/* 新增：全年級平均摘要列 (永久顯示，作為比較基準) */}
               {schoolAverageStats && (
                 <tfoot className="bg-slate-200 font-bold border-t-2 border-slate-300 print:bg-gray-100">
                   <tr>
@@ -654,7 +655,7 @@ export default function DynamicGradeSystem() {
               </thead>
               <tbody className="divide-y divide-slate-100 print:divide-gray-300">
                 {displayData.map((student, idx) => {
-                  const rank = viewMode === 'school' ? student.schoolRank : (idx + 1); // 簡化班排顯示
+                  const rank = viewMode === 'school' ? student.schoolRank : (idx + 1); 
                   const rowBg = getClassColor(student.class);
                   return (
                     <tr key={`${student.class}-${student.seat}`} className={`${rowBg} hover:brightness-95 transition-all print:break-inside-avoid`}>
@@ -679,7 +680,6 @@ export default function DynamicGradeSystem() {
               </tbody>
             </table>
             
-            {/* 班級統計資訊 (只在班級模式且有篩選時顯示) */}
             {viewMode === 'class' && selectedClass !== 'All' && (
               <div className="p-4 text-xs text-slate-500 bg-slate-50 border-t border-slate-200 no-print">
                 本班級共有 {displayData.length} 位學生
