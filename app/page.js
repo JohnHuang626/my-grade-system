@@ -1,9 +1,8 @@
 'use client';
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Trophy, Users, BookOpen, ChevronDown, Search, PlusCircle, Settings, Link, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Printer, Filter } from 'lucide-react';
+import { Trophy, Users, BookOpen, ChevronDown, Search, PlusCircle, Settings, Link, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Printer, Filter, ExternalLink, FileSpreadsheet } from 'lucide-react';
 
-// --- 設定：班級專屬背景色票 (更鮮明的區隔) ---
-// 順序：1.淡藍 2.黃色 3.綠色 4.灰色 5.橙色
+// --- 設定：班級專屬背景色票 ---
 const CLASS_BG_COLORS = [
   'bg-blue-100',   // 尾數 1, 6
   'bg-yellow-100', // 尾數 2, 7
@@ -12,7 +11,6 @@ const CLASS_BG_COLORS = [
   'bg-orange-100'  // 尾數 5, 0
 ];
 
-// 輔助：根據班級名稱數字決定顏色 (5色循環)
 const getClassColor = (className) => {
   if (!className) return 'bg-white';
   const num = parseInt(String(className).replace(/\D/g, ''), 10);
@@ -22,7 +20,6 @@ const getClassColor = (className) => {
   return CLASS_BG_COLORS[index];
 };
 
-// 輔助計算
 const processGrades = (student) => {
   const parseScore = (val) => Number(val) || 0;
   
@@ -51,72 +48,71 @@ export default function DynamicGradeSystem() {
 
   const [exams, setExams] = useState([]);
   const [currentExam, setCurrentExam] = useState(''); 
-  const [classes, setClasses] = useState([]); 
+  const [classes, setClasses] = useState([]); // 這裡將儲存 { name, id } 物件
 
   const [database, setDatabase] = useState({});
   const [viewMode, setViewMode] = useState('school'); 
   const [selectedClass, setSelectedClass] = useState('All'); 
   const [showAdminPanel, setShowAdminPanel] = useState(false);
 
-  // --- 列印功能 ---
-  const handlePrint = () => {
-    window.print();
-  };
+  const handlePrint = () => window.print();
 
-  // --- 密碼保護 ---
   const handleToggleSettings = () => {
     if (showAdminPanel) {
       setShowAdminPanel(false);
-      setErrorMsg(''); 
-      setSuccessMsg('');
+      setErrorMsg(''); setSuccessMsg('');
     } else {
       const password = window.prompt("請輸入管理員密碼：");
-      if (password === "888") {
-        setShowAdminPanel(true);
-      } else if (password !== null) {
-        alert("密碼錯誤！");
-      }
+      if (password === "888") setShowAdminPanel(true);
+      else if (password !== null) alert("密碼錯誤！");
     }
   };
 
-  // --- 抓取設定與自動定位最新考試 ---
+  // --- 抓取設定 ---
   const fetchSettings = useCallback(async (url) => {
     if (!url) return;
     setIsConfigLoading(true);
     setErrorMsg('');
     try {
-      // 1. 取得考試列表
       const fetchUrl = `${url}${url.includes('?') ? '&' : '?'}action=getSettings&t=${new Date().getTime()}`;
       const response = await fetch(fetchUrl, { method: 'GET', mode: 'cors', redirect: 'follow' });
       if (!response.ok) throw new Error('讀取設定失敗');
       const data = await response.json();
       
-      let examList = [];
       if (data.exams && data.exams.length > 0) {
         setExams(data.exams);
-        examList = data.exams;
+        setCurrentExam(prev => {
+           const currentExists = data.exams.some(e => e.id === prev);
+           if (currentExists && prev) return prev;
+           return data.exams[data.exams.length - 1].id;
+        });
       }
+      
+      // [修正] 處理班級資料，支援新版 API 回傳的 {name, id} 格式
       if (data.classes && data.classes.length > 0) {
-        setClasses(data.classes);
+        const formattedClasses = data.classes.map(c => {
+          // 如果後端只回傳字串 (舊版)，就沒有 ID
+          if (typeof c === 'string' || typeof c === 'number') {
+            return { name: String(c), id: null };
+          }
+          // 如果後端回傳物件 (新版)，則包含 ID
+          return { name: String(c.name), id: c.id };
+        });
+        setClasses(formattedClasses);
       }
 
-      // 2. 智慧定位：尋找「有實際分數」的最新考試 (Binary Search)
-      if (examList.length > 0) {
+      // 智慧定位最新考試 (略過...)
+      if (data.exams && data.exams.length > 0) {
         setSuccessMsg('已連線，正在搜尋最新考試記錄...');
-        
-        // 輔助：檢查某個 Exam ID 是否有"真實"成績
         const checkData = async (id) => {
            try {
              const r = await fetch(`${url}${url.includes('?')?'&':'?'}exam=${id}&t=${Date.now()}`, {method: 'GET', mode: 'cors', redirect:'follow'});
              const j = await r.json();
-             
              if (Array.isArray(j) && j.length > 0) {
-               // 檢查是否有任何一科不是空白字串
                const hasRealScores = j.some(student => {
                  const subjects = ['chi', 'eng', 'math', 'sci', 'geo', 'hist', 'civ'];
                  return subjects.some(sub => student[sub] !== "" && student[sub] !== undefined && student[sub] !== null);
                });
-
                if (hasRealScores) {
                  setDatabase(prev => ({ ...prev, [id]: j }));
                  return true;
@@ -126,21 +122,13 @@ export default function DynamicGradeSystem() {
            } catch { return false; }
         };
 
-        let low = 0;
-        let high = examList.length - 1;
-        let bestIndex = 0; 
-
-        // 先檢查最後一個
-        const lastHasData = await checkData(examList[high].id);
-        if (lastHasData) {
-          bestIndex = high;
-        } else {
-          // 二分搜尋法
+        let low = 0, high = data.exams.length - 1, bestIndex = 0;
+        const lastHasData = await checkData(data.exams[high].id);
+        if (lastHasData) bestIndex = high;
+        else {
           while (low <= high) {
             const mid = Math.floor((low + high) / 2);
-            const hasData = await checkData(examList[mid].id);
-            
-            if (hasData) {
+            if (await checkData(data.exams[mid].id)) {
               bestIndex = mid;
               low = mid + 1;
             } else {
@@ -148,12 +136,9 @@ export default function DynamicGradeSystem() {
             }
           }
         }
-
-        const targetExamId = examList[bestIndex].id;
-        setCurrentExam(targetExamId);
-        setSuccessMsg(`已連線！自動切換至最新有成績的考試：${examList[bestIndex].label}`);
+        setCurrentExam(data.exams[bestIndex].id);
+        setSuccessMsg(`已連線！自動切換至：${data.exams[bestIndex].label}`);
       }
-
     } catch (err) {
       console.error('Config Fetch Error:', err);
     } finally {
@@ -161,39 +146,35 @@ export default function DynamicGradeSystem() {
     }
   }, []); 
 
-  // --- 抓取成績資料 (單一考試) ---
   const fetchLiveData = useCallback(async (examId) => {
     const targetUrlRaw = googleScriptUrl.trim();
     if (!targetUrlRaw || !examId) return;
-    if (targetUrlRaw.includes('/edit')) {
-      setErrorMsg('網址錯誤：請使用 /exec 結尾的部署網址');
-      return;
-    }
+    if (targetUrlRaw.includes('/edit')) { setErrorMsg('網址錯誤'); return; }
 
     setIsLoading(true);
-    setErrorMsg('');
-    setSuccessMsg('');
+    setErrorMsg(''); setSuccessMsg('');
     
     try {
       const fetchUrl = `${targetUrlRaw}${targetUrlRaw.includes('?') ? '&' : '?'}exam=${examId}&t=${new Date().getTime()}`;
       const response = await fetch(fetchUrl, { method: 'GET', mode: 'cors', redirect: 'follow' });
-      if (!response.ok) throw new Error(`伺服器回應錯誤 (Status: ${response.status})`);
+      if (!response.ok) throw new Error(`Status: ${response.status}`);
       const data = await response.json();
-      if (!Array.isArray(data)) throw new Error('資料格式錯誤');
+      if (!Array.isArray(data)) throw new Error('Format Error');
       
       setDatabase(prev => ({ ...prev, [examId]: data }));
       
-      const uniqueClasses = [...new Set(data.map(d => String(d.class)))].sort();
-      if (uniqueClasses.length > 0) setClasses(uniqueClasses);
+      // 更新班級列表 (如果設定檔沒抓到，這裡做 fallback)
+      const uniqueClassNames = [...new Set(data.map(d => String(d.class)))].sort();
+      setClasses(prev => {
+        // 如果目前沒班級資料，或是現有資料沒有 ID，嘗試合併
+        if (prev.length === 0) return uniqueClassNames.map(name => ({ name, id: null }));
+        return prev;
+      });
 
       setSuccessMsg(`成功讀取！共 ${data.length} 筆資料`);
     } catch (err) {
-      console.error('Data Fetch Error:', err);
-      let userTip = '';
-      if (err.name === 'TypeError' && err.message.includes('fetch')) {
-        userTip = ' (請檢查 Apps Script 權限是否為「任何人」)';
-      }
-      setErrorMsg(`抓取失敗: ${err.message}${userTip}`);
+      console.error(err);
+      setErrorMsg(`抓取失敗: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -204,28 +185,19 @@ export default function DynamicGradeSystem() {
     if (url && url.includes('script.google.com')) fetchSettings(url);
   };
 
-  // 監聽：切換考試時自動抓取
   useEffect(() => {
     if (googleScriptUrl && !isLoading && currentExam) {
       const hasData = database[currentExam] && database[currentExam].length > 0;
-      if (!hasData) {
-        fetchLiveData(currentExam);
-      }
+      if (!hasData) fetchLiveData(currentExam);
     }
   }, [currentExam, googleScriptUrl, isLoading, database, fetchLiveData]);
 
-  // 初始化
   useEffect(() => {
-    if (googleScriptUrl) {
-      fetchSettings(googleScriptUrl);
-    }
+    if (googleScriptUrl) fetchSettings(googleScriptUrl);
   }, [fetchSettings, googleScriptUrl]);
 
-  // 切換模式重設班級
   useEffect(() => {
-    if (viewMode === 'school') {
-      setSelectedClass('All');
-    }
+    if (viewMode === 'school') setSelectedClass('All');
   }, [viewMode]);
 
   // --- 運算邏輯 ---
@@ -237,7 +209,6 @@ export default function DynamicGradeSystem() {
     return ['All', ...Array.from(clsSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))];
   }, [processedData]);
 
-  // 校排資料
   const sortedData = useMemo(() => {
     const sorted = [...processedData].sort((a, b) => b.total - a.total);
     let rank = 1;
@@ -247,7 +218,6 @@ export default function DynamicGradeSystem() {
     });
   }, [processedData]);
 
-  // 顯示資料
   const displayData = useMemo(() => {
     let data = [...sortedData];
     if (viewMode === 'class' && selectedClass !== 'All') {
@@ -264,7 +234,6 @@ export default function DynamicGradeSystem() {
     return data;
   }, [sortedData, viewMode, selectedClass]);
 
-  // 分析資料
   const classAnalysisData = useMemo(() => {
     const groups = {};
     processedData.forEach(student => {
@@ -291,17 +260,10 @@ export default function DynamicGradeSystem() {
       const g = groups[cls];
       const avg = (sum) => (sum / g.count).toFixed(1);
       return {
-        class: cls,
-        count: g.count,
-        chi: avg(g.chi),
-        eng: avg(g.eng),
-        math: avg(g.math),
-        sci: avg(g.sci),
-        geo: avg(g.geo),
-        hist: avg(g.hist),
-        civ: avg(g.civ),
-        social: avg(g.social),
-        total: avg(g.total)
+        class: cls, count: g.count,
+        chi: avg(g.chi), eng: avg(g.eng), math: avg(g.math), sci: avg(g.sci),
+        geo: avg(g.geo), hist: avg(g.hist), civ: avg(g.civ),
+        social: avg(g.social), total: avg(g.total)
       };
     });
   }, [processedData]);
@@ -311,7 +273,6 @@ export default function DynamicGradeSystem() {
     return classAnalysisData.filter(d => String(d.class) === selectedClass);
   }, [classAnalysisData, selectedClass]);
 
-  // 全年級平均
   const schoolAverageStats = useMemo(() => {
     if (processedData.length === 0) return null;
     const totals = { count: 0, chi: 0, eng: 0, math: 0, sci: 0, geo: 0, hist: 0, civ: 0, social: 0, total: 0 };
@@ -330,15 +291,9 @@ export default function DynamicGradeSystem() {
     const avg = (sum) => (sum / totals.count).toFixed(1);
     return {
       count: totals.count,
-      chi: avg(totals.chi),
-      eng: avg(totals.eng),
-      math: avg(totals.math),
-      sci: avg(totals.sci),
-      geo: avg(totals.geo),
-      hist: avg(totals.hist),
-      civ: avg(totals.civ),
-      social: avg(totals.social),
-      total: avg(totals.total)
+      chi: avg(totals.chi), eng: avg(totals.eng), math: avg(totals.math), sci: avg(totals.sci),
+      geo: avg(totals.geo), hist: avg(totals.hist), civ: avg(totals.civ),
+      social: avg(totals.social), total: avg(totals.total)
     };
   }, [processedData]);
 
@@ -346,12 +301,8 @@ export default function DynamicGradeSystem() {
     const examName = exams.find(e => e.id === currentExam)?.label || currentExam || '...';
     let typeName = '';
     if (viewMode === 'school') typeName = '全校總榜';
-    else if (viewMode === 'class') {
-      typeName = selectedClass !== 'All' ? `${selectedClass}班 成績單` : '班級成績單 (全校)';
-    }
-    else if (viewMode === 'analysis') {
-      typeName = selectedClass !== 'All' ? `${selectedClass}班 與年級平均比較表` : '各班平均分析表';
-    }
+    else if (viewMode === 'class') typeName = selectedClass !== 'All' ? `${selectedClass}班 成績單` : '班級成績單 (全校)';
+    else if (viewMode === 'analysis') typeName = selectedClass !== 'All' ? `${selectedClass}班 與年級平均比較表` : '各班平均分析表';
     return `${examName} - ${typeName}`;
   };
 
@@ -359,27 +310,11 @@ export default function DynamicGradeSystem() {
     <div className="min-h-screen bg-slate-100 font-sans pb-10 print:bg-white print:pb-0">
       <style>{`
         @media print {
-          @page {
-            size: ${viewMode === 'analysis' ? 'A4 portrait' : 'A3 portrait'};
-            margin: 10mm;
-          }
-          body {
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-            background-color: white !important;
-          }
+          @page { size: ${viewMode === 'analysis' ? 'A4 portrait' : 'A3 portrait'}; margin: 10mm; }
+          body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; background-color: white !important; }
           .no-print { display: none !important; }
-          .table-container {
-            box-shadow: none !important;
-            border: 1px solid #ddd !important;
-            overflow: visible !important;
-            max-height: none !important;
-          }
-          .print-header {
-            display: block !important;
-            text-align: center;
-            margin-bottom: 20px;
-          }
+          .table-container { box-shadow: none !important; border: 1px solid #ddd !important; overflow: visible !important; max-height: none !important; }
+          .print-header { display: block !important; text-align: center; margin-bottom: 20px; }
           .print-header h1 { font-size: 24px; font-weight: bold; }
           .print-header p { font-size: 14px; color: #666; }
         }
@@ -394,49 +329,21 @@ export default function DynamicGradeSystem() {
             <span className="font-bold text-lg hidden md:inline">校務成績中心</span>
             <span className="font-bold text-lg md:hidden">成績中心</span>
           </div>
-          
           <div className="flex items-center gap-3">
-             <button 
-              onClick={handlePrint}
-              className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 transition-colors border border-blue-500 text-white"
-              title="列印報表"
-            >
-              <Printer className="w-3 h-3" />
-              列印
+             <button onClick={handlePrint} className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 border border-blue-500 text-white" title="列印報表">
+              <Printer className="w-3 h-3" /> 列印
             </button>
-
-            <button 
-              onClick={handleToggleSettings}
-              className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded-full transition-colors border ${
-                showAdminPanel ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'
-              }`}
-            >
-              <Settings className="w-3 h-3" />
-              {showAdminPanel ? '設定' : '管理員'}
+            <button onClick={handleToggleSettings} className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded-full border ${showAdminPanel ? 'bg-emerald-600 border-emerald-500' : 'bg-slate-700 border-slate-600 text-slate-300'}`}>
+              <Settings className="w-3 h-3" /> {showAdminPanel ? '設定' : '管理員'}
             </button>
             <div className="relative group">
-              <select
-                value={currentExam}
-                onChange={(e) => setCurrentExam(e.target.value)}
-                className="appearance-none bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 pl-4 pr-10 rounded text-sm font-medium cursor-pointer focus:outline-none transition-colors"
-              >
-                {exams.length > 0 ? (
-                  exams.map(opt => (
-                    <option key={opt.id} value={opt.id}>{opt.label}</option>
-                  ))
-                ) : (
-                  <option>載入中...</option>
-                )}
+              <select value={currentExam} onChange={(e) => setCurrentExam(e.target.value)} className="appearance-none bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 pl-4 pr-10 rounded text-sm font-medium cursor-pointer">
+                {exams.length > 0 ? exams.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>) : <option>載入中...</option>}
               </select>
               <ChevronDown className="w-4 h-4 absolute right-2 top-2 pointer-events-none text-emerald-200" />
             </div>
             {googleScriptUrl && (
-              <button 
-                onClick={() => fetchLiveData(currentExam)}
-                disabled={isLoading || !currentExam}
-                className="p-1.5 bg-slate-700 rounded hover:bg-slate-600 text-emerald-400 disabled:opacity-50"
-                title="重新抓取成績"
-              >
+              <button onClick={() => fetchLiveData(currentExam)} disabled={isLoading || !currentExam} className="p-1.5 bg-slate-700 rounded hover:bg-slate-600 text-emerald-400 disabled:opacity-50">
                 <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
               </button>
             )}
@@ -450,44 +357,17 @@ export default function DynamicGradeSystem() {
           <div className="max-w-6xl mx-auto p-6">
             <div className="mb-8 p-4 bg-blue-50 border border-blue-100 rounded-lg">
               <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center mb-3">
-                 <h3 className="font-bold text-blue-900 flex items-center gap-2">
-                   <Link className="w-5 h-5" />
-                   Google Sheets 連線設定
-                 </h3>
-                 <div className="text-xs text-blue-500">
-                   * 請在此輸入 Apps Script 部署網址以連結資料庫
-                 </div>
+                 <h3 className="font-bold text-blue-900 flex items-center gap-2"><Link className="w-5 h-5" /> Google Sheets 連線設定</h3>
+                 <div className="text-xs text-blue-500">* 請在此輸入 Apps Script 部署網址以連結資料庫</div>
               </div>
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-blue-700">Apps Script Web App URL</label>
                 <div className="flex flex-col sm:flex-row gap-2">
-                  <input 
-                    type="text" 
-                    value={googleScriptUrl}
-                    onChange={(e) => setGoogleScriptUrl(e.target.value)}
-                    placeholder="請貼上您的 https://script.google.com/.../exec 網址"
-                    className="flex-grow px-3 py-2 text-sm border border-blue-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <button 
-                    onClick={handleConnect}
-                    disabled={isConfigLoading || !googleScriptUrl}
-                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {isConfigLoading ? '讀取設定...' : '連線並同步設定'}
-                  </button>
+                  <input type="text" value={googleScriptUrl} onChange={(e) => setGoogleScriptUrl(e.target.value)} placeholder="請貼上您的 exec 網址" className="flex-grow px-3 py-2 text-sm border border-blue-200 rounded" />
+                  <button onClick={handleConnect} disabled={isConfigLoading || !googleScriptUrl} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap">{isConfigLoading ? '讀取設定...' : '連線並同步設定'}</button>
                 </div>
-                {errorMsg && (
-                  <div className="flex items-center gap-2 text-red-600 text-sm mt-2 bg-red-50 p-2 rounded animate-pulse">
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                    <span>{errorMsg}</span>
-                  </div>
-                )}
-                {successMsg && (
-                  <div className="flex items-center gap-2 text-green-700 text-sm mt-2 bg-green-50 p-2 rounded">
-                    <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-                    <span>{successMsg}</span>
-                  </div>
-                )}
+                {errorMsg && <div className="flex items-center gap-2 text-red-600 text-sm mt-2 bg-red-50 p-2 rounded animate-pulse"><AlertCircle className="w-4 h-4 flex-shrink-0" /><span>{errorMsg}</span></div>}
+                {successMsg && <div className="flex items-center gap-2 text-green-700 text-sm mt-2 bg-green-50 p-2 rounded"><CheckCircle2 className="w-4 h-4 flex-shrink-0" /><span>{successMsg}</span></div>}
               </div>
             </div>
           </div>
@@ -500,8 +380,46 @@ export default function DynamicGradeSystem() {
         <p>列印日期：{new Date().toLocaleDateString()}</p>
       </div>
 
-      {/* 主要內容區 */}
-      <main className="max-w-6xl mx-auto px-4 print:max-w-none print:px-0">
+      <main className="max-w-6xl mx-auto px-4 print:max-w-none print:px-0 pt-6">
+        
+        {/* === 新增區塊：各班成績輸入入口 (Quick Links) === */}
+        <div className="mb-6 no-print">
+          <h3 className="text-sm font-bold text-slate-500 mb-3 flex items-center gap-2">
+            <FileSpreadsheet className="w-4 h-4" />
+            各班成績輸入 (導師專用)
+          </h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {classes.length > 0 ? (
+              classes.map((cls) => (
+                <a
+                  key={cls.name}
+                  href={cls.id ? `https://docs.google.com/spreadsheets/d/${cls.id}` : '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => {
+                    if (!cls.id) {
+                      e.preventDefault();
+                      alert(`尚未設定 ${cls.name} 班的試算表連結。\n請確認 Master Sheet 中的 ID 欄位是否正確，並更新 Google Apps Script。`);
+                    }
+                  }}
+                  className={`flex items-center justify-between px-4 py-3 rounded-lg border shadow-sm transition-all hover:-translate-y-1 hover:shadow-md group ${
+                    cls.id 
+                      ? 'bg-white border-slate-200 hover:border-emerald-400 hover:bg-emerald-50 text-slate-700' 
+                      : 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed'
+                  }`}
+                >
+                  <span className="font-bold">{cls.name} 班</span>
+                  <ExternalLink className={`w-4 h-4 ${cls.id ? 'text-slate-400 group-hover:text-emerald-500' : 'text-slate-300'}`} />
+                </a>
+              ))
+            ) : (
+              <div className="col-span-full text-center py-4 text-slate-400 text-sm bg-white rounded border border-dashed">
+                連線後將自動載入班級連結...
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="flex flex-col sm:flex-row justify-between items-end mb-4 gap-2 no-print">
            <div>
              <h2 className="text-2xl font-bold text-slate-800">
@@ -516,28 +434,13 @@ export default function DynamicGradeSystem() {
 
         {/* 頁籤切換 */}
         <div className="flex flex-wrap gap-2 mb-4 border-b border-slate-200 no-print items-center">
-           <button 
-             onClick={() => setViewMode('school')}
-             className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${
-               viewMode === 'school' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'
-             }`}
-           >
+           <button onClick={() => setViewMode('school')} className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${viewMode === 'school' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
              <Trophy className="w-4 h-4" /> 全校總榜 (A3)
            </button>
-           <button 
-             onClick={() => setViewMode('class')}
-             className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${
-               viewMode === 'class' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'
-             }`}
-           >
+           <button onClick={() => setViewMode('class')} className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${viewMode === 'class' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
              <Users className="w-4 h-4" /> 班級成績單 (A3)
            </button>
-           <button 
-             onClick={() => setViewMode('analysis')}
-             className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${
-               viewMode === 'analysis' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-500 hover:text-slate-700'
-             }`}
-           >
+           <button onClick={() => setViewMode('analysis')} className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${viewMode === 'analysis' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
              <BarChart3 className="w-4 h-4" /> 班級分析 (A4)
            </button>
 
@@ -545,15 +448,9 @@ export default function DynamicGradeSystem() {
              <div className="ml-auto flex items-center gap-2 animate-in fade-in slide-in-from-left-2 duration-300">
                <div className="relative">
                  <Filter className="w-4 h-4 absolute left-3 top-2.5 text-emerald-600" />
-                 <select
-                   value={selectedClass}
-                   onChange={(e) => setSelectedClass(e.target.value)}
-                   className="pl-9 pr-8 py-2 bg-emerald-50 border border-emerald-200 rounded-full text-sm font-bold text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer appearance-none hover:bg-emerald-100 transition-colors"
-                 >
+                 <select value={selectedClass} onChange={(e) => setSelectedClass(e.target.value)} className="pl-9 pr-8 py-2 bg-emerald-50 border border-emerald-200 rounded-full text-sm font-bold text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer appearance-none hover:bg-emerald-100 transition-colors">
                    <option value="All">顯示全部班級</option>
-                   {availableClasses.map(cls => cls !== 'All' && (
-                     <option key={cls} value={cls}>{cls} 班</option>
-                   ))}
+                   {availableClasses.map(cls => cls !== 'All' && <option key={cls} value={cls}>{cls} 班</option>)}
                  </select>
                  <ChevronDown className="w-4 h-4 absolute right-3 top-2.5 text-emerald-600 pointer-events-none" />
                </div>
@@ -586,7 +483,7 @@ export default function DynamicGradeSystem() {
                   <th className="px-4 py-3 text-right">地理(均)</th>
                   <th className="px-4 py-3 text-right">歷史(均)</th>
                   <th className="px-4 py-3 text-right">公民(均)</th>
-                  <th className="px-4 py-3 text-right bg-purple-100/50 print:bg-gray-200">社會科(均)</th>
+                  <th className="px-4 py-3 text-right bg-purple-100/50 print:bg-gray-200">社會(均)</th>
                   <th className="px-4 py-3 text-right bg-slate-100 text-slate-800 print:bg-gray-200">總分(均)</th>
                 </tr>
               </thead>
@@ -654,7 +551,7 @@ export default function DynamicGradeSystem() {
               </thead>
               <tbody className="divide-y divide-slate-100 print:divide-gray-300">
                 {displayData.map((student, idx) => {
-                  const rank = viewMode === 'school' ? student.schoolRank : (idx + 1); // 簡化班排顯示
+                  const rank = viewMode === 'school' ? student.schoolRank : (idx + 1); 
                   const rowBg = getClassColor(student.class);
                   return (
                     <tr key={`${student.class}-${student.seat}`} className={`${rowBg} hover:brightness-95 transition-all print:break-inside-avoid`}>
