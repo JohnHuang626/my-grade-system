@@ -287,7 +287,7 @@ export default function DynamicGradeSystem() {
       g.total += student.total;
     });
 
-    return Object.keys(groups).sort((a, b) => {
+    const baseList = Object.keys(groups).sort((a, b) => {
        return String(a).localeCompare(String(b), undefined, { numeric: true });
     }).map(cls => {
       const g = groups[cls];
@@ -298,6 +298,30 @@ export default function DynamicGradeSystem() {
         geo: avg(g.geo), hist: avg(g.hist), civ: avg(g.civ),
         social: avg(g.social), total: avg(g.total)
       };
+    });
+
+    // 計算各科與總分在年級中的班級排名 (處理同分同名次)
+    const subjects = ['chi', 'eng', 'math', 'sci', 'geo', 'hist', 'civ', 'social', 'total'];
+    const ranks = {};
+    
+    subjects.forEach(sub => {
+      const sorted = [...baseList].sort((a, b) => parseFloat(b[sub]) - parseFloat(a[sub]));
+      ranks[sub] = {};
+      let currentRank = 1;
+      sorted.forEach((item, index) => {
+        if (index > 0 && parseFloat(item[sub]) < parseFloat(sorted[index - 1][sub])) {
+          currentRank = index + 1;
+        }
+        ranks[sub][item.class] = currentRank;
+      });
+    });
+
+    return baseList.map(item => {
+      const itemWithRanks = { ...item };
+      subjects.forEach(sub => {
+        itemWithRanks[`${sub}Rank`] = ranks[sub][item.class];
+      });
+      return itemWithRanks;
     });
   }, [processedData]);
 
@@ -586,15 +610,15 @@ export default function DynamicGradeSystem() {
                     <tr key={cls.class} className={`${rowBg} hover:brightness-95 transition-all`}>
                       <td className="px-4 py-3 font-bold text-slate-700">{cls.class} 班</td>
                       <td className="px-4 py-3 text-right text-slate-500">{cls.count}</td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-600">{cls.chi}</td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-600">{cls.eng}</td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-600">{cls.math}</td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-600">{cls.sci}</td>
-                      <td className="px-4 py-3 text-right text-slate-500">{cls.geo}</td>
-                      <td className="px-4 py-3 text-right text-slate-500">{cls.hist}</td>
-                      <td className="px-4 py-3 text-right text-slate-500">{cls.civ}</td>
-                      <td className="px-4 py-3 text-right font-bold text-purple-600 bg-purple-50/20 print:text-black">{cls.social}</td>
-                      <td className="px-4 py-3 text-right font-black text-slate-800 bg-slate-50">{cls.total}</td>
+                      <td className="px-4 py-3 text-right font-medium text-slate-600">{cls.chi}<span className="text-xs text-slate-400 font-normal ml-0.5 print:text-black">({cls.chiRank})</span></td>
+                      <td className="px-4 py-3 text-right font-medium text-slate-600">{cls.eng}<span className="text-xs text-slate-400 font-normal ml-0.5 print:text-black">({cls.engRank})</span></td>
+                      <td className="px-4 py-3 text-right font-medium text-slate-600">{cls.math}<span className="text-xs text-slate-400 font-normal ml-0.5 print:text-black">({cls.mathRank})</span></td>
+                      <td className="px-4 py-3 text-right font-medium text-slate-600">{cls.sci}<span className="text-xs text-slate-400 font-normal ml-0.5 print:text-black">({cls.sciRank})</span></td>
+                      <td className="px-4 py-3 text-right text-slate-500">{cls.geo}<span className="text-xs text-slate-400 font-normal ml-0.5 print:text-black">({cls.geoRank})</span></td>
+                      <td className="px-4 py-3 text-right text-slate-500">{cls.hist}<span className="text-xs text-slate-400 font-normal ml-0.5 print:text-black">({cls.histRank})</span></td>
+                      <td className="px-4 py-3 text-right text-slate-500">{cls.civ}<span className="text-xs text-slate-400 font-normal ml-0.5 print:text-black">({cls.civRank})</span></td>
+                      <td className="px-4 py-3 text-right font-bold text-purple-600 bg-purple-50/20 print:text-black">{cls.social}<span className="text-xs text-purple-400 font-normal ml-0.5 print:text-black">({cls.socialRank})</span></td>
+                      <td className="px-4 py-3 text-right font-black text-slate-800 bg-slate-50">{cls.total}<span className="text-xs text-slate-500 font-normal ml-0.5 print:text-black">({cls.totalRank})</span></td>
                     </tr>
                   );
                 })}
@@ -618,7 +642,7 @@ export default function DynamicGradeSystem() {
               )}
             </table>
             <div className="p-4 text-xs text-slate-500 bg-slate-50 border-t border-slate-200 no-print">
-              * 此表顯示各班級的平均分數 (總分加總 ÷ 該班人數)。全年級平均為所有學生加總 ÷ 總人數。
+              * 此表顯示各班級的平均分數 (總分加總 ÷ 該班人數)，括號內數字為該科在全年級各班中的排名。全年級平均為所有學生加總 ÷ 總人數。
             </div>
           </div>
         ) : (
