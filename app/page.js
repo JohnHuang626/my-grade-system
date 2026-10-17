@@ -1,4 +1,4 @@
-'use client';
+"use client";
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Trophy, Users, BookOpen, ChevronDown, Search, PlusCircle, Settings, Link, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Printer, Filter, ExternalLink, FileSpreadsheet } from 'lucide-react';
 
@@ -54,6 +54,10 @@ export default function DynamicGradeSystem() {
   const [viewMode, setViewMode] = useState('school'); 
   const [selectedClass, setSelectedClass] = useState('All'); 
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [toastMessage, setToastMessage] = useState('');
 
   const handlePrint = () => window.print();
 
@@ -62,9 +66,19 @@ export default function DynamicGradeSystem() {
       setShowAdminPanel(false);
       setErrorMsg(''); setSuccessMsg('');
     } else {
-      const password = window.prompt("請輸入管理員密碼：");
-      if (password === "888") setShowAdminPanel(true);
-      else if (password !== null) alert("密碼錯誤！");
+      setShowPasswordModal(true);
+      setPasswordInput('');
+      setPasswordError('');
+    }
+  };
+
+  const handlePasswordSubmit = (e) => {
+    e.preventDefault();
+    if (passwordInput === "888") {
+      setShowAdminPanel(true);
+      setShowPasswordModal(false);
+    } else {
+      setPasswordError("密碼錯誤，請重新輸入！");
     }
   };
 
@@ -230,6 +244,25 @@ export default function DynamicGradeSystem() {
          if (classA !== classB) return classA.localeCompare(classB, undefined, { numeric: true });
          return b.total - a.total;
        });
+
+       // 計算各班級內部的正確排名 (處理同分同名次，且切換班級時重新從 1 開始計算)
+       let currentClass = null;
+       let currentRank = 1;
+       let classStudentIndex = 0;
+
+       data = data.map((s, idx) => {
+         if (s.class !== currentClass) {
+           currentClass = s.class;
+           classStudentIndex = 0;
+           currentRank = 1;
+         } else {
+           classStudentIndex++;
+           if (s.total < data[idx - 1].total) {
+             currentRank = classStudentIndex + 1;
+           }
+         }
+         return { ...s, classRank: currentRank };
+       });
     }
     return data;
   }, [sortedData, viewMode, selectedClass]);
@@ -310,13 +343,16 @@ export default function DynamicGradeSystem() {
     <div className="min-h-screen bg-slate-100 font-sans pb-10 print:bg-white print:pb-0">
       <style>{`
         @media print {
-          @page { size: ${viewMode === 'analysis' ? 'A4 portrait' : 'A3 portrait'}; margin: 10mm; }
+          @page { size: ${viewMode === 'analysis' ? 'A4 portrait' : 'A3 portrait'}; margin: 8mm; }
           body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; background-color: white !important; }
           .no-print { display: none !important; }
-          .table-container { box-shadow: none !important; border: 1px solid #ddd !important; overflow: visible !important; max-height: none !important; }
-          .print-header { display: block !important; text-align: center; margin-bottom: 20px; }
-          .print-header h1 { font-size: 24px; font-weight: bold; }
-          .print-header p { font-size: 14px; color: #666; }
+          .table-container { box-shadow: none !important; border: 1px solid #ddd !important; overflow: visible !important; max-height: none !important; width: 100% !important; }
+          .print-header { display: block !important; text-align: center; margin-bottom: 12px; }
+          .print-header h1 { font-size: 20px; font-weight: bold; }
+          .print-header p { font-size: 12px; color: #666; }
+          /* 縮減列印時的內距與字體大小，確保 13 個欄位能完整塞進同一頁不超出邊界 */
+          table { width: 100% !important; border-collapse: collapse !important; }
+          th, td { padding: 5px 4px !important; font-size: 12px !important; white-space: nowrap !important; }
         }
         .print-header { display: none; }
       `}</style>
@@ -380,6 +416,62 @@ export default function DynamicGradeSystem() {
         <p>列印日期：{new Date().toLocaleDateString()}</p>
       </div>
 
+      {/* 密碼輸入視窗 */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 no-print">
+          <div className="bg-white p-6 rounded-xl shadow-xl max-w-sm w-full mx-4">
+            <h3 className="text-lg font-bold text-slate-800 mb-4">請輸入管理員密碼</h3>
+            <form onSubmit={handlePasswordSubmit}>
+              <input
+                type="password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg mb-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder="輸入密碼..."
+                autoFocus
+              />
+              {passwordError && <p className="text-red-500 text-xs mb-3">{passwordError}</p>}
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowPasswordModal(false)}
+                  className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+                >
+                  確認
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 提示訊息視窗 */}
+      {toastMessage && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 no-print">
+          <div className="bg-white p-6 rounded-xl shadow-xl max-w-sm w-full mx-4">
+            <div className="flex items-center gap-2 text-amber-600 font-bold mb-2">
+              <AlertCircle className="w-5 h-5" />
+              <span>提示</span>
+            </div>
+            <p className="text-slate-600 text-sm whitespace-pre-line mb-4">{toastMessage}</p>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setToastMessage('')}
+                className="px-4 py-2 text-sm bg-slate-800 text-white rounded-lg hover:bg-slate-700"
+              >
+                關閉
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="max-w-6xl mx-auto px-4 print:max-w-none print:px-0 pt-6">
         
         {/* === 新增區塊：各班成績輸入入口 (Quick Links) === */}
@@ -399,7 +491,7 @@ export default function DynamicGradeSystem() {
                   onClick={(e) => {
                     if (!cls.id) {
                       e.preventDefault();
-                      alert(`尚未設定 ${cls.name} 班的試算表連結。\n請確認 Master Sheet 中的 ID 欄位是否正確，並更新 Google Apps Script。`);
+                      setToastMessage(`尚未設定 ${cls.name} 班的試算表連結。\n請確認 Master Sheet 中的 ID 欄位是否正確，並更新 Google Apps Script。`);
                     }
                   }}
                   className={`flex items-center justify-between px-4 py-3 rounded-lg border shadow-sm transition-all hover:-translate-y-1 hover:shadow-md group ${
@@ -536,6 +628,9 @@ export default function DynamicGradeSystem() {
               <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200 print:bg-gray-100 print:text-black">
                 <tr>
                   <th className="px-4 py-3 text-center w-16">{viewMode === 'school' ? '全校排名' : '班級排名'}</th>
+                  {viewMode === 'class' && (
+                    <th className="px-3 py-3 text-center w-20 text-indigo-700 bg-indigo-50/40 print:bg-gray-100 print:text-black">全年級名次</th>
+                  )}
                   <th className="px-4 py-3">班級</th>
                   <th className="px-4 py-3">姓名</th>
                   <th className="px-4 py-3 text-right">總分</th>
@@ -550,8 +645,8 @@ export default function DynamicGradeSystem() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 print:divide-gray-300">
-                {displayData.map((student, idx) => {
-                  const rank = viewMode === 'school' ? student.schoolRank : (idx + 1); 
+                {displayData.map((student) => {
+                  const rank = viewMode === 'school' ? student.schoolRank : student.classRank; 
                   const rowBg = getClassColor(student.class);
                   return (
                     <tr key={`${student.class}-${student.seat}`} className={`${rowBg} hover:brightness-95 transition-all print:break-inside-avoid`}>
@@ -562,6 +657,11 @@ export default function DynamicGradeSystem() {
                           {rank}
                         </span>
                       </td>
+                      {viewMode === 'class' && (
+                        <td className="px-3 py-3 text-center font-bold text-indigo-700 bg-indigo-50/20 print:bg-transparent print:text-black">
+                          {student.schoolRank}
+                        </td>
+                      )}
                       <td className="px-4 py-3 font-medium text-slate-700">{student.class}</td>
                       <td className="px-4 py-3 text-slate-600">{student.name}</td>
                       <td className="px-4 py-3 text-right font-black text-slate-800">{student.total}</td>
