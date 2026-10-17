@@ -386,7 +386,7 @@ export default function DynamicGradeSystem() {
         <div className="max-w-6xl mx-auto px-4 h-16 flex justify-between items-center">
           <div className="flex items-center gap-2">
             <BookOpen className="w-6 h-6 text-emerald-400" />
-            <span className="font-bold text-lg hidden md:inline">校務成績中心</span>
+            <span className="font-bold text-lg hidden md:inline">年級成績中心</span>
             <span className="font-bold text-lg md:hidden">成績中心</span>
           </div>
           <div className="flex items-center gap-3">
