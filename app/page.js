@@ -417,6 +417,101 @@ export default function DynamicGradeSystem() {
     };
   }, [processedData]);
 
+  // 新增：當在「班級分析」選擇特定班級時，計算該班七科的組距分布、班高標(前標P75)、班低標(後標P25)、標準差與雷達圖數據
+  const detailedClassStats = useMemo(() => {
+    if (viewMode !== 'analysis' || selectedClass === 'All' || !schoolAverageStats) return null;
+    
+    const classStudents = processedData.filter(s => String(s.class) === selectedClass);
+    if (classStudents.length === 0) return null;
+
+    const subjects = [
+      { key: 'chi', label: '國文' },
+      { key: 'eng', label: '英語' },
+      { key: 'math', label: '數學' },
+      { key: 'sci', label: '自然' },
+      { key: 'geo', label: '地理' },
+      { key: 'hist', label: '歷史' },
+      { key: 'civ', label: '公民' }
+    ];
+
+    const ranges = [
+      { label: '90~100', min: 90, max: 100 },
+      { label: '80~89', min: 80, max: 89.99 },
+      { label: '70~79', min: 70, max: 79.99 },
+      { label: '60~69', min: 60, max: 69.99 },
+      { label: '50~59', min: 50, max: 59.99 },
+      { label: '40~49', min: 40, max: 49.99 },
+      { label: '0~39', min: 0, max: 39.99 },
+    ];
+
+    // 計算百分位數 (用於高標 P75 與低標 P25)
+    const getPercentile = (sortedAsc, p) => {
+      if (sortedAsc.length === 0) return 0;
+      const index = (sortedAsc.length - 1) * p;
+      const lower = Math.floor(index);
+      const upper = Math.ceil(index);
+      const weight = index - lower;
+      return sortedAsc[lower] * (1 - weight) + sortedAsc[upper] * weight;
+    };
+
+    const statsBySubject = {};
+
+    subjects.forEach(({ key, label }) => {
+      const scores = classStudents.map(s => Number(s[key]) || 0);
+      const sortedAsc = [...scores].sort((a, b) => a - b);
+      const n = scores.length;
+
+      // 平均值
+      const mean = n > 0 ? scores.reduce((a, b) => a + b, 0) / n : 0;
+
+      // 標準差 (Standard Deviation)
+      const variance = n > 0 ? scores.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / n : 0;
+      const stdDev = Math.sqrt(variance);
+
+      // 班高標 (前標 75th percentile) & 班低標 (後標 25th percentile)
+      const highMark = getPercentile(sortedAsc, 0.75);
+      const lowMark = getPercentile(sortedAsc, 0.25);
+
+      // 各組距人數統計
+      const counts = {};
+      let maxCount = 0;
+      ranges.forEach(r => {
+        let count = 0;
+        if (r.label === '90~100') {
+          count = scores.filter(val => val >= 90).length;
+        } else if (r.label === '0~39') {
+          count = scores.filter(val => val < 40).length;
+        } else {
+          const base = parseInt(r.label.split('~')[0], 10);
+          count = scores.filter(val => val >= base && val < base + 10).length;
+        }
+        counts[r.label] = count;
+        if (count > maxCount) maxCount = count;
+      });
+
+      const schoolAvg = Number(schoolAverageStats[key]) || 0;
+      const ratio = schoolAvg > 0 ? ((mean / schoolAvg) * 100).toFixed(1) : '100.0';
+      const diff = (mean - schoolAvg).toFixed(1);
+
+      statsBySubject[key] = {
+        label,
+        counts,
+        maxCount,
+        mean: mean.toFixed(2),
+        highMark: highMark.toFixed(2),
+        lowMark: lowMark.toFixed(2),
+        stdDev: stdDev.toFixed(2),
+        schoolAvg: schoolAvg.toFixed(2),
+        meanNum: mean,
+        schoolAvgNum: schoolAvg,
+        ratio,
+        diff: Number(diff) > 0 ? `+${diff}` : diff
+      };
+    });
+
+    return { subjects, ranges, statsBySubject, studentCount: classStudents.length };
+  }, [viewMode, selectedClass, processedData, schoolAverageStats]);
+
   // 輔助：顯示進退步標記 (↑進步 / ↓退步 / -持平)
   const renderRankChange = (change, prevRank) => {
     if (change === null || change === undefined) return null;
@@ -672,7 +767,8 @@ export default function DynamicGradeSystem() {
             <p className="text-slate-400">目前沒有資料。<br/>請確認管理員已設定 Google Apps Script 連線網址。</p>
           </div>
         ) : viewMode === 'analysis' ? (
-          /* --- 班級分析表格 --- */
+          /* --- 班級分析表格與個別班級深度圖表 --- */
+          <div>
           <div className="table-container bg-white shadow rounded-xl overflow-hidden border border-slate-200 print:shadow-none print:border-black">
             <table className="w-full text-sm text-left">
               <thead className="bg-purple-50 text-purple-900 font-bold border-b border-purple-100 print:bg-gray-100 print:text-black">
@@ -729,8 +825,280 @@ export default function DynamicGradeSystem() {
               )}
             </table>
             <div className="p-4 text-xs text-slate-500 bg-slate-50 border-t border-slate-200 no-print">
-              * 此表顯示各班級的平均分數 (總分加總 ÷ 該班人數)，括號內數字為該科在全年級各班中的排名。全年級平均為所有學生加總 ÷ 總人數。
+              * 此表顯示各班級的平均分數 (總分加總 ÷ 該班人數)，括號內數字為該科在全年級各班中的排名。全年級平均為所有學生加總 ÷ 總人數。{selectedClass === 'All' && ' 請由右上方下拉選單選擇「特定班級」，即可檢視該班級距分布表、高低標、標準差與雷達圖分析！'}
             </div>
+          </div>
+
+          {/* === 當選取特定班級時，顯示組距統計表與七科雷達圖 === */}
+          {detailedClassStats && (
+            <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 print:grid-cols-12 print:gap-4 print:mt-4 print:break-inside-avoid">
+              
+              {/* 左側：各科組距人數、高低標與標準差統計表 */}
+              <div className="lg:col-span-7 print:col-span-7 bg-white shadow rounded-xl overflow-hidden border border-slate-200 print:shadow-none print:border-black">
+                <div className="bg-slate-800 text-white px-4 py-2.5 font-bold text-sm flex justify-between items-center print:bg-gray-200 print:text-black print:border-b print:border-black">
+                  <span>{selectedClass} 班 各科分數級距與五標統計表</span>
+                  <span className="text-xs font-normal text-slate-300 print:text-gray-700">統計人數：{detailedClassStats.studentCount} 人</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-center border-collapse">
+                    <thead>
+                      <tr className="bg-blue-50/80 text-slate-700 font-bold border-b border-slate-200 print:bg-gray-100 print:text-black">
+                        <th className="py-2 px-2 border-r border-slate-200 print:border-gray-400">組距 / 統計</th>
+                        {detailedClassStats.subjects.map(sub => (
+                          <th key={sub.key} className="py-2 px-2 border-r border-slate-100 last:border-r-0 print:border-gray-400">{sub.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 print:divide-gray-400">
+                      {/* 分數級距列 (90~100 至 0~39) */}
+                      {detailedClassStats.ranges.map(range => (
+                        <tr key={range.label} className="hover:bg-slate-50">
+                          <td className="py-1.5 px-2 font-bold bg-blue-50/40 text-slate-700 border-r border-slate-200 print:bg-gray-50 print:border-gray-400">
+                            {range.label}
+                          </td>
+                          {detailedClassStats.subjects.map(sub => {
+                            const count = detailedClassStats.statsBySubject[sub.key].counts[range.label];
+                            const maxCount = detailedClassStats.statsBySubject[sub.key].maxCount;
+                            // 標示該科最多人分布的組距 (仿照參考圖的橘色底色)
+                            const isMode = count > 0 && count === maxCount;
+                            return (
+                              <td
+                                key={sub.key}
+                                className={`py-1.5 px-2 border-r border-slate-100 last:border-r-0 print:border-gray-400 ${
+                                  isMode ? 'bg-orange-200/70 font-bold text-orange-950 print:bg-orange-100' : 'text-slate-600'
+                                }`}
+                              >
+                                {count}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+
+                      {/* 班平均 */}
+                      <tr className="bg-slate-50 font-semibold border-t-2 border-slate-300 print:border-gray-500">
+                        <td className="py-1.5 px-2 font-bold bg-slate-200/70 text-slate-800 border-r border-slate-300 print:bg-gray-200 print:border-gray-400">班平均</td>
+                        {detailedClassStats.subjects.map(sub => (
+                          <td key={sub.key} className="py-1.5 px-2 text-slate-800 border-r border-slate-200 last:border-r-0 print:border-gray-400">
+                            {detailedClassStats.statsBySubject[sub.key].mean}
+                          </td>
+                        ))}
+                      </tr>
+
+                      {/* 班高標 (前標 P75) */}
+                      <tr className="bg-slate-50/60">
+                        <td className="py-1.5 px-2 font-bold bg-slate-200/70 text-slate-800 border-r border-slate-300 print:bg-gray-200 print:border-gray-400" title="第75百分位數 (P75)">班高標</td>
+                        {detailedClassStats.subjects.map(sub => (
+                          <td key={sub.key} className="py-1.5 px-2 text-emerald-700 font-medium border-r border-slate-200 last:border-r-0 print:text-black print:border-gray-400">
+                            {detailedClassStats.statsBySubject[sub.key].highMark}
+                          </td>
+                        ))}
+                      </tr>
+
+                      {/* 班低標 (後標 P25) */}
+                      <tr className="bg-slate-50/60">
+                        <td className="py-1.5 px-2 font-bold bg-slate-200/70 text-slate-800 border-r border-slate-300 print:bg-gray-200 print:border-gray-400" title="第25百分位數 (P25)">班低標</td>
+                        {detailedClassStats.subjects.map(sub => (
+                          <td key={sub.key} className="py-1.5 px-2 text-amber-700 font-medium border-r border-slate-200 last:border-r-0 print:text-black print:border-gray-400">
+                            {detailedClassStats.statsBySubject[sub.key].lowMark}
+                          </td>
+                        ))}
+                      </tr>
+
+                      {/* 標準差 */}
+                      <tr className="bg-slate-50/60">
+                        <td className="py-1.5 px-2 font-bold bg-slate-200/70 text-slate-800 border-r border-slate-300 print:bg-gray-200 print:border-gray-400">標準差</td>
+                        {detailedClassStats.subjects.map(sub => (
+                          <td key={sub.key} className="py-1.5 px-2 text-slate-600 border-r border-slate-200 last:border-r-0 print:text-black print:border-gray-400">
+                            {detailedClassStats.statsBySubject[sub.key].stdDev}
+                          </td>
+                        ))}
+                      </tr>
+
+                      {/* 相較全校平均比例 (%) */}
+                      <tr className="bg-purple-50/60 font-bold border-t border-purple-200 print:bg-gray-100">
+                        <td className="py-1.5 px-2 text-purple-900 bg-purple-100/70 border-r border-purple-200 print:bg-gray-200 print:text-black print:border-gray-400" title="(班平均 ÷ 全校平均) × 100%">佔全校比</td>
+                        {detailedClassStats.subjects.map(sub => {
+                          const s = detailedClassStats.statsBySubject[sub.key];
+                          const isHigher = s.meanNum >= s.schoolAvgNum;
+                          return (
+                            <td key={sub.key} className={`py-1.5 px-1 border-r border-purple-100 last:border-r-0 print:border-gray-400 ${isHigher ? 'text-emerald-600 print:text-black' : 'text-rose-600 print:text-black'}`}>
+                              {s.ratio}%
+                              <span className="block text-[10px] font-normal text-slate-500">({s.diff})</span>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-3 py-2 text-[11px] text-slate-500 bg-slate-50 border-t border-slate-200 flex flex-wrap justify-between gap-2">
+                  <span>* 橘底色塊代表該科目人數分布最多的分數組距（眾數區間）。</span>
+                  <span>* 班高標為前標(P75)、班低標為後標(P25)。</span>
+                </div>
+              </div>
+
+              {/* 右側：班級與全校平均比較雷達圖 (SVG) */}
+              <div className="lg:col-span-5 print:col-span-5 bg-white shadow rounded-xl p-4 border border-slate-200 flex flex-col items-center justify-between print:shadow-none print:border-black">
+                <div className="w-full text-center border-b border-slate-100 pb-2 mb-1">
+                  <h4 className="font-bold text-slate-800 text-base">{selectedClass} 班 vs 全年級平均 分析雷達圖</h4>
+                  <p className="text-xs text-slate-500">七大科目平均分數與相對比例分布 (0~100分)</p>
+                </div>
+
+                {/* SVG 七角雷達圖 */}
+                {(() => {
+                  const size = 300;
+                  const center = size / 2;
+                  const radius = 98;
+                  const subs = detailedClassStats.subjects;
+                  const totalAxes = subs.length; // 7科
+                  const levels = [20, 40, 60, 80, 100];
+
+                  const getPoint = (index, value) => {
+                    const angle = (Math.PI * 2 * index) / totalAxes - Math.PI / 2;
+                    const r = (Math.max(0, Math.min(100, value)) / 100) * radius;
+                    return {
+                      x: center + r * Math.cos(angle),
+                      y: center + r * Math.sin(angle),
+                      angle
+                    };
+                  };
+
+                  // 全年級平均多邊形座標
+                  const schoolPolygon = subs.map((sub, i) => {
+                    const val = detailedClassStats.statsBySubject[sub.key].schoolAvgNum;
+                    const pt = getPoint(i, val);
+                    return `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`;
+                  }).join(' ');
+
+                  // 班級平均多邊形座標
+                  const classPolygon = subs.map((sub, i) => {
+                    const val = detailedClassStats.statsBySubject[sub.key].meanNum;
+                    const pt = getPoint(i, val);
+                    return `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`;
+                  }).join(' ');
+
+                  return (
+                    <svg viewBox={`0 0 ${size} ${size}`} className="w-full max-w-[290px] h-auto my-auto overflow-visible">
+                      {/* 同心七角形背景格線 (20, 40, 60, 80, 100) */}
+                      {levels.map(lvl => {
+                        const pts = subs.map((_, i) => {
+                          const pt = getPoint(i, lvl);
+                          return `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`;
+                        }).join(' ');
+                        return (
+                          <polygon
+                            key={lvl}
+                            points={pts}
+                            fill="none"
+                            stroke="#e2e8f0"
+                            strokeWidth="1"
+                          />
+                        );
+                      })}
+
+                      {/* 放射狀軸線 */}
+                      {subs.map((_, i) => {
+                        const endPt = getPoint(i, 100);
+                        return (
+                          <line
+                            key={i}
+                            x1={center}
+                            y1={center}
+                            x2={endPt.x}
+                            y2={endPt.y}
+                            stroke="#cbd5e1"
+                            strokeWidth="1"
+                            strokeDasharray="2,2"
+                          />
+                        );
+                      })}
+
+                      {/* 刻度數值標示 (0, 20, 40, 60, 80, 100) */}
+                      {[0, ...levels].map(lvl => (
+                        <text
+                          key={lvl}
+                          x={center - 6}
+                          y={center - (lvl / 100) * radius + 3}
+                          fontSize="9"
+                          fill="#64748b"
+                          textAnchor="end"
+                          className="font-semibold"
+                        >
+                          {lvl}
+                        </text>
+                      ))}
+
+                      {/* 全年級平均區域 (綠色線條) */}
+                      <polygon
+                        points={schoolPolygon}
+                        fill="rgba(16, 185, 129, 0.12)"
+                        stroke="#10b981"
+                        strokeWidth="2"
+                      />
+
+                      {/* 班級平均區域 (橘色線條) */}
+                      <polygon
+                        points={classPolygon}
+                        fill="rgba(249, 115, 22, 0.22)"
+                        stroke="#ea580c"
+                        strokeWidth="2.5"
+                      />
+
+                      {/* 各科頂點圓點與標籤 (含相較全校之百分比) */}
+                      {subs.map((sub, i) => {
+                        const st = detailedClassStats.statsBySubject[sub.key];
+                        const classPt = getPoint(i, st.meanNum);
+                        const schoolPt = getPoint(i, st.schoolAvgNum);
+                        const labelPt = getPoint(i, 126);
+                        const isHigher = st.meanNum >= st.schoolAvgNum;
+
+                        return (
+                          <g key={sub.key}>
+                            <circle cx={schoolPt.x} cy={schoolPt.y} r="3" fill="#10b981" />
+                            <circle cx={classPt.x} cy={classPt.y} r="3.5" fill="#ea580c" />
+                            <text
+                              x={labelPt.x}
+                              y={labelPt.y - 4}
+                              fontSize="11"
+                              fontWeight="bold"
+                              fill="#334155"
+                              textAnchor="middle"
+                            >
+                              {sub.label}
+                            </text>
+                            <text
+                              x={labelPt.x}
+                              y={labelPt.y + 9}
+                              fontSize="9.5"
+                              fontWeight="bold"
+                              fill={isHigher ? '#059669' : '#e11d48'}
+                              textAnchor="middle"
+                            >
+                              ({st.ratio}%)
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                  );
+                })()}
+
+                {/* 圖例說明 */}
+                <div className="w-full flex justify-center items-center gap-6 pt-2 border-t border-slate-100 text-xs font-bold">
+                  <div className="flex items-center gap-2 text-orange-600">
+                    <span className="w-5 h-1 bg-orange-600 rounded-full inline-block"></span>
+                    <span>{selectedClass} 班平均</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-emerald-600">
+                    <span className="w-5 h-1 bg-emerald-500 rounded-full inline-block"></span>
+                    <span>全年級平均 (基準 100%)</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          )}
           </div>
         ) : (
           /* --- 原有的總榜/班級列表 --- */
