@@ -160,13 +160,15 @@ export default function DynamicGradeSystem() {
     }
   }, []); 
 
-  const fetchLiveData = useCallback(async (examId) => {
+  const fetchLiveData = useCallback(async (examId, isBackground = false) => {
     const targetUrlRaw = googleScriptUrl.trim();
     if (!targetUrlRaw || !examId) return;
-    if (targetUrlRaw.includes('/edit')) { setErrorMsg('網址錯誤'); return; }
+    if (targetUrlRaw.includes('/edit')) { if (!isBackground) setErrorMsg('網址錯誤'); return; }
 
-    setIsLoading(true);
-    setErrorMsg(''); setSuccessMsg('');
+    if (!isBackground) {
+      setIsLoading(true);
+      setErrorMsg(''); setSuccessMsg('');
+    }
     
     try {
       const fetchUrl = `${targetUrlRaw}${targetUrlRaw.includes('?') ? '&' : '?'}exam=${examId}&t=${new Date().getTime()}`;
@@ -177,20 +179,22 @@ export default function DynamicGradeSystem() {
       
       setDatabase(prev => ({ ...prev, [examId]: data }));
       
-      // 更新班級列表 (如果設定檔沒抓到，這裡做 fallback)
-      const uniqueClassNames = [...new Set(data.map(d => String(d.class)))].sort();
-      setClasses(prev => {
-        // 如果目前沒班級資料，或是現有資料沒有 ID，嘗試合併
-        if (prev.length === 0) return uniqueClassNames.map(name => ({ name, id: null }));
-        return prev;
-      });
+      if (!isBackground) {
+        // 更新班級列表 (如果設定檔沒抓到，這裡做 fallback)
+        const uniqueClassNames = [...new Set(data.map(d => String(d.class)))].sort();
+        setClasses(prev => {
+          // 如果目前沒班級資料，或是現有資料沒有 ID，嘗試合併
+          if (prev.length === 0) return uniqueClassNames.map(name => ({ name, id: null }));
+          return prev;
+        });
 
-      setSuccessMsg(`成功讀取！共 ${data.length} 筆資料`);
+        setSuccessMsg(`成功讀取！共 ${data.length} 筆資料`);
+      }
     } catch (err) {
       console.error(err);
-      setErrorMsg(`抓取失敗: ${err.message}`);
+      if (!isBackground) setErrorMsg(`抓取失敗: ${err.message}`);
     } finally {
-      setIsLoading(false);
+      if (!isBackground) setIsLoading(false);
     }
   }, [googleScriptUrl]); 
 
@@ -206,6 +210,23 @@ export default function DynamicGradeSystem() {
     }
   }, [currentExam, googleScriptUrl, isLoading, database, fetchLiveData]);
 
+  // 自動在背景抓取「上一次考試」的資料，用來計算名次進退步
+  const prevExamId = useMemo(() => {
+    if (!currentExam || exams.length === 0) return null;
+    const idx = exams.findIndex(e => e.id === currentExam);
+    if (idx > 0) return exams[idx - 1].id;
+    return null;
+  }, [currentExam, exams]);
+
+  useEffect(() => {
+    if (googleScriptUrl && prevExamId) {
+      const hasPrevData = database[prevExamId] && database[prevExamId].length > 0;
+      if (!hasPrevData) {
+        fetchLiveData(prevExamId, true);
+      }
+    }
+  }, [prevExamId, googleScriptUrl, database, fetchLiveData]);
+
   useEffect(() => {
     if (googleScriptUrl) fetchSettings(googleScriptUrl);
   }, [fetchSettings, googleScriptUrl]);
@@ -218,6 +239,35 @@ export default function DynamicGradeSystem() {
   const currentData = useMemo(() => database[currentExam] || [], [database, currentExam]);
   const processedData = useMemo(() => currentData.map(processGrades), [currentData]);
 
+  // 計算上一次考試的全校排名對照表
+  const prevRankMap = useMemo(() => {
+    if (!prevExamId || !database[prevExamId]) return null;
+    const prevRaw = database[prevExamId];
+    if (!Array.isArray(prevRaw) || prevRaw.length === 0) return null;
+
+    // 確認上次考試有實際分數才納入比較
+    const hasScores = prevRaw.some(student => {
+      const subjects = ['chi', 'eng', 'math', 'sci', 'geo', 'hist', 'civ'];
+      return subjects.some(sub => student[sub] !== "" && student[sub] !== undefined && student[sub] !== null);
+    });
+    if (!hasScores) return null;
+
+    const prevProcessed = prevRaw.map(processGrades);
+    const prevSorted = [...prevProcessed].sort((a, b) => b.total - a.total);
+    
+    const map = {};
+    let rank = 1;
+    prevSorted.forEach((s, i) => {
+      if (i > 0 && s.total < prevSorted[i - 1].total) rank = i + 1;
+      // 使用「班級-座號」作為唯一識別碼，並保留「班級-姓名」作為備用對照
+      const keySeat = `${s.class}-${s.seat}`;
+      const keyName = `${s.class}-${s.name}`;
+      map[keySeat] = rank;
+      if (s.name) map[keyName] = rank;
+    });
+    return map;
+  }, [prevExamId, database]);
+
   const availableClasses = useMemo(() => {
     const clsSet = new Set(processedData.map(s => String(s.class)));
     return ['All', ...Array.from(clsSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))];
@@ -228,9 +278,22 @@ export default function DynamicGradeSystem() {
     let rank = 1;
     return sorted.map((s, i) => {
       if (i > 0 && s.total < sorted[i-1].total) rank = i + 1;
-      return { ...s, schoolRank: rank };
+      
+      let rankChange = null;
+      let prevSchoolRank = null;
+      if (prevRankMap) {
+        const keySeat = `${s.class}-${s.seat}`;
+        const keyName = `${s.class}-${s.name}`;
+        prevSchoolRank = prevRankMap[keySeat] ?? prevRankMap[keyName] ?? null;
+        if (prevSchoolRank !== null) {
+          // 上次名次 減 本次名次：正數代表進步(名次數字變小)，負數代表退步
+          rankChange = prevSchoolRank - rank;
+        }
+      }
+
+      return { ...s, schoolRank: rank, prevSchoolRank, rankChange };
     });
-  }, [processedData]);
+  }, [processedData, prevRankMap]);
 
   const displayData = useMemo(() => {
     let data = [...sortedData];
@@ -353,6 +416,30 @@ export default function DynamicGradeSystem() {
       social: avg(totals.social), total: avg(totals.total)
     };
   }, [processedData]);
+
+  // 輔助：顯示進退步標記 (↑進步 / ↓退步 / -持平)
+  const renderRankChange = (change, prevRank) => {
+    if (change === null || change === undefined) return null;
+    if (change > 0) {
+      return (
+        <span className="text-[11px] font-bold text-emerald-600 ml-1 inline-block print:text-black" title={`上次全校第 ${prevRank} 名 (進步 ${change} 名)`}>
+          ↑{change}
+        </span>
+      );
+    }
+    if (change < 0) {
+      return (
+        <span className="text-[11px] font-bold text-rose-500 ml-1 inline-block print:text-black" title={`上次全校第 ${prevRank} 名 (退步 ${Math.abs(change)} 名)`}>
+          ↓{Math.abs(change)}
+        </span>
+      );
+    }
+    return (
+      <span className="text-[11px] font-normal text-slate-400 ml-1 inline-block print:text-black" title={`上次全校第 ${prevRank} 名 (名次持平)`}>
+        -
+      </span>
+    );
+  };
 
   const getPrintTitle = () => {
     const examName = exams.find(e => e.id === currentExam)?.label || currentExam || '...';
@@ -651,9 +738,9 @@ export default function DynamicGradeSystem() {
             <table className="w-full text-sm text-left">
               <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200 print:bg-gray-100 print:text-black">
                 <tr>
-                  <th className="px-4 py-3 text-center w-16">{viewMode === 'school' ? '全校排名' : '班級排名'}</th>
+                  <th className="px-3 py-3 text-center w-24 whitespace-nowrap">{viewMode === 'school' ? '全校排名' : '班級排名'}</th>
                   {viewMode === 'class' && (
-                    <th className="px-3 py-3 text-center w-20 text-indigo-700 bg-indigo-50/40 print:bg-gray-100 print:text-black">全年級名次</th>
+                    <th className="px-3 py-3 text-center w-24 whitespace-nowrap text-indigo-700 bg-indigo-50/40 print:bg-gray-100 print:text-black">全年級名次</th>
                   )}
                   <th className="px-4 py-3">班級</th>
                   <th className="px-4 py-3">姓名</th>
@@ -674,16 +761,18 @@ export default function DynamicGradeSystem() {
                   const rowBg = getClassColor(student.class);
                   return (
                     <tr key={`${student.class}-${student.seat}`} className={`${rowBg} hover:brightness-95 transition-all print:break-inside-avoid`}>
-                      <td className="px-4 py-3 text-center">
+                      <td className="px-3 py-3 text-center whitespace-nowrap">
                         <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
                           rank <= 3 ? 'bg-amber-100 text-amber-700 print:border print:border-black' : 'bg-white/50 text-slate-500'
                         }`}>
                           {rank}
                         </span>
+                        {viewMode === 'school' && renderRankChange(student.rankChange, student.prevSchoolRank)}
                       </td>
                       {viewMode === 'class' && (
-                        <td className="px-3 py-3 text-center font-bold text-indigo-700 bg-indigo-50/20 print:bg-transparent print:text-black">
+                        <td className="px-3 py-3 text-center whitespace-nowrap font-bold text-indigo-700 bg-indigo-50/20 print:bg-transparent print:text-black">
                           {student.schoolRank}
+                          {renderRankChange(student.rankChange, student.prevSchoolRank)}
                         </td>
                       )}
                       <td className="px-4 py-3 font-medium text-slate-700">{student.class}</td>
