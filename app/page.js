@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Trophy, Users, BookOpen, ChevronDown, Search, PlusCircle, Settings, Link, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Printer, Filter, ExternalLink, FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Trophy, Users, BookOpen, ChevronDown, Search, PlusCircle, Settings, Link, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Printer, Filter, ExternalLink, FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown, Award } from 'lucide-react';
+
 
 // --- 設定：班級專屬背景色票 ---
 const CLASS_BG_COLORS = [
@@ -575,6 +576,65 @@ export default function DynamicGradeSystem() {
     return { subjects, ranges, statsBySubject, studentCount: classStudents.length };
   }, [viewMode, selectedClass, processedData, schoolAverageStats]);
 
+  // 新增：計算「前十傑」（總分前十名與各科前十名，含第十名同分並列）
+  const topTenData = useMemo(() => {
+    if (processedData.length === 0) return null;
+
+    const categories = [
+      { key: 'total', label: '總分前十傑', color: 'bg-amber-600', lightBg: 'bg-amber-50', border: 'border-amber-200', isTotal: true },
+      { key: 'chi', label: '國文前十傑', color: 'bg-rose-600', lightBg: 'bg-rose-50', border: 'border-rose-200' },
+      { key: 'eng', label: '英語前十傑', color: 'bg-blue-600', lightBg: 'bg-blue-50', border: 'border-blue-200' },
+      { key: 'math', label: '數學前十傑', color: 'bg-indigo-600', lightBg: 'bg-indigo-50', border: 'border-indigo-200' },
+      { key: 'sci', label: '自然前十傑', color: 'bg-emerald-600', lightBg: 'bg-emerald-50', border: 'border-emerald-200' },
+      { key: 'social', label: '社會(均)前十傑', color: 'bg-purple-600', lightBg: 'bg-purple-50', border: 'border-purple-200' },
+      { key: 'geo', label: '地理前十傑', color: 'bg-teal-600', lightBg: 'bg-teal-50', border: 'border-teal-200' },
+      { key: 'hist', label: '歷史前十傑', color: 'bg-orange-600', lightBg: 'bg-orange-50', border: 'border-orange-200' },
+      { key: 'civ', label: '公民前十傑', color: 'bg-cyan-600', lightBg: 'bg-cyan-50', border: 'border-cyan-200' },
+    ];
+
+    const result = {};
+
+    categories.forEach(cat => {
+      // 過濾出該科有效分數 (>0) 的學生並由高至低排序
+      const validStudents = processedData.filter(s => {
+        const val = s[cat.key];
+        return val !== "" && val !== undefined && val !== null && Number(val) > 0;
+      });
+
+      const sorted = [...validStudents].sort((a, b) => {
+        const diff = (Number(b[cat.key]) || 0) - (Number(a[cat.key]) || 0);
+        if (diff !== 0) return diff;
+        // 同分時依班級與座號由小到大排
+        const clsCmp = String(a.class || '').localeCompare(String(b.class || ''), undefined, { numeric: true });
+        if (clsCmp !== 0) return clsCmp;
+        return (Number(a.seat) || 0) - (Number(b.seat) || 0);
+      });
+
+      const list = [];
+      let currentRank = 1;
+
+      for (let i = 0; i < sorted.length; i++) {
+        if (i > 0 && Number(sorted[i][cat.key]) < Number(sorted[i - 1][cat.key])) {
+          currentRank = i + 1;
+        }
+        // 只取名次 <= 10 的學生（若第 10 名有多人同分，currentRank 皆 <= 10，會全部列入）
+        if (currentRank <= 10) {
+          list.push({
+            ...sorted[i],
+            rank: currentRank,
+            score: sorted[i][cat.key]
+          });
+        } else {
+          break;
+        }
+      }
+
+      result[cat.key] = { ...cat, list };
+    });
+
+    return { categories, result };
+  }, [processedData]);
+
   // 輔助：顯示進退步標記 (↑進步 / ↓退步 / -持平)
   const renderRankChange = (change, prevRank) => {
     if (change === null || change === undefined) return null;
@@ -605,6 +665,7 @@ export default function DynamicGradeSystem() {
     if (viewMode === 'school') typeName = '全校總榜';
     else if (viewMode === 'class') typeName = selectedClass !== 'All' ? `${selectedClass}班 成績單` : '班級成績單 (全校)';
     else if (viewMode === 'analysis') typeName = selectedClass !== 'All' ? `${selectedClass}班 與年級平均比較表` : '各班平均分析表';
+    else if (viewMode === 'top10') typeName = '總分暨各科前十傑榮譽榜';
     return `${examName} - ${typeName}`;
   };
 
@@ -612,16 +673,22 @@ export default function DynamicGradeSystem() {
     <div className="min-h-screen bg-slate-100 font-sans pb-10 print:bg-white print:pb-0">
       <style>{`
         @media print {
-          @page { size: ${viewMode === 'analysis' ? 'A4 portrait' : 'A3 portrait'}; margin: 8mm; }
+          @page { 
+            size: ${viewMode === 'analysis' ? 'A4 portrait' : viewMode === 'top10' ? 'B4 portrait' : 'A3 portrait'}; 
+            margin: ${viewMode === 'top10' ? '6mm' : '8mm'}; 
+          }
           body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; background-color: white !important; }
           .no-print { display: none !important; }
           .table-container { box-shadow: none !important; border: 1px solid #ddd !important; overflow: visible !important; max-height: none !important; width: 100% !important; }
-          .print-header { display: block !important; text-align: center; margin-bottom: 12px; }
-          .print-header h1 { font-size: 20px; font-weight: bold; }
-          .print-header p { font-size: 12px; color: #666; }
-          /* 縮減列印時的內距與字體大小，確保 13 個欄位能完整塞進同一頁不超出邊界 */
+          .print-header { display: block !important; text-align: center; margin-bottom: ${viewMode === 'top10' ? '6px' : '12px'}; }
+          .print-header h1 { font-size: ${viewMode === 'top10' ? '18px' : '20px'}; font-weight: bold; }
+          .print-header p { font-size: 11px; color: #666; }
+          /* 縮減列印時的內距與字體大小，確保所有欄位能完整塞進同一頁不超出邊界 */
           table { width: 100% !important; border-collapse: collapse !important; }
-          th, td { padding: 5px 4px !important; font-size: 12px !important; white-space: nowrap !important; }
+          th, td { padding: ${viewMode === 'top10' ? '2px 3px' : '5px 4px'} !important; font-size: ${viewMode === 'top10' ? '10.5px' : '12px'} !important; white-space: nowrap !important; }
+          .top10-grid { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 6px !important; }
+          .top10-card { break-inside: avoid !important; page-break-inside: avoid !important; border: 1px solid #94a3b8 !important; box-shadow: none !important; }
+          .top10-card-header { padding: 3px 6px !important; font-size: 12px !important; }
         }
         .print-header { display: none; }
       `}</style>
@@ -803,6 +870,9 @@ export default function DynamicGradeSystem() {
            </button>
            <button onClick={() => setViewMode('analysis')} className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${viewMode === 'analysis' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
              <BarChart3 className="w-4 h-4" /> 班級分析 (A4)
+           </button>
+           <button onClick={() => setViewMode('top10')} className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${viewMode === 'top10' ? 'border-amber-600 text-amber-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+             <Award className="w-4 h-4" /> 前十傑 (B4)
            </button>
 
            {(viewMode === 'class' || viewMode === 'analysis') && (
@@ -1162,6 +1232,69 @@ export default function DynamicGradeSystem() {
 
             </div>
           )}
+          </div>
+        ) : viewMode === 'top10' ? (
+          /* --- 前十傑 (總分與各科前十名，3x3 緊湊網格排版，適合 B4 單頁列印) --- */
+          <div>
+            <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex justify-between items-center no-print">
+              <span>* 列出本次段考「總分」及「各單科」全校前十名學生（若第十名有同分者則全數並列列出）。</span>
+              <span className="font-bold">列印預設紙張：B4 直向 (自動縮排為 3×3 九宮格單頁報表)</span>
+            </div>
+
+            {topTenData && (
+              <div className="top10-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {topTenData.categories.map(cat => {
+                  const group = topTenData.result[cat.key];
+                  return (
+                    <div key={cat.key} className={`top10-card bg-white rounded-xl shadow-sm border ${cat.border} overflow-hidden flex flex-col`}>
+                      <div className={`top10-card-header ${cat.color} text-white px-3 py-2 font-bold text-sm flex justify-between items-center print:bg-gray-200 print:text-black print:border-b print:border-gray-400`}>
+                        <span className="flex items-center gap-1.5">
+                          <Award className="w-4 h-4 print:hidden" />
+                          {cat.label}
+                        </span>
+                        <span className="text-xs font-normal opacity-90">共 {group.list.length} 人</span>
+                      </div>
+                      <table className="w-full text-xs text-left">
+                        <thead className={`${cat.lightBg} text-slate-700 font-bold border-b ${cat.border} print:bg-gray-100 print:text-black`}>
+                          <tr>
+                            <th className="py-1.5 px-2 text-center w-12">名次</th>
+                            <th className="py-1.5 px-2">班級(座號)</th>
+                            <th className="py-1.5 px-2">姓名</th>
+                            <th className="py-1.5 px-2 text-right">分數</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 print:divide-gray-300">
+                          {group.list.length > 0 ? (
+                            group.list.map((st) => {
+                              const rowBg = getClassColor(st.class);
+                              return (
+                                <tr key={`${cat.key}-${st.class}-${st.seat}`} className={`${rowBg} hover:brightness-95`}>
+                                  <td className="py-1 px-2 text-center font-bold">
+                                    <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[11px] ${
+                                      st.rank === 1 ? 'bg-amber-300 text-amber-950 font-black print:border print:border-black' :
+                                      st.rank <= 3 ? 'bg-amber-100 text-amber-800 font-bold' : 'text-slate-600'
+                                    }`}>
+                                      {st.rank}
+                                    </span>
+                                  </td>
+                                  <td className="py-1 px-2 font-medium text-slate-700">{formatClassSeat(st.class, st.seat)}</td>
+                                  <td className="py-1 px-2 font-semibold text-slate-800">{st.name}</td>
+                                  <td className="py-1 px-2 text-right font-black text-slate-900">{st.score}</td>
+                                </tr>
+                              );
+                            })
+                          ) : (
+                            <tr>
+                              <td colSpan="4" className="py-4 text-center text-slate-400">尚無成績資料</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         ) : (
           /* --- 原有的總榜/班級列表 --- */
