@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Trophy, Users, BookOpen, ChevronDown, Search, PlusCircle, Settings, Link, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Printer, Filter, ExternalLink, FileSpreadsheet } from 'lucide-react';
+import { Trophy, Users, BookOpen, ChevronDown, Search, PlusCircle, Settings, Link, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Printer, Filter, ExternalLink, FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 // --- 設定：班級專屬背景色票 ---
 const CLASS_BG_COLORS = [
@@ -58,6 +58,7 @@ export default function DynamicGradeSystem() {
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [toastMessage, setToastMessage] = useState('');
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
 
   const handlePrint = () => window.print();
 
@@ -233,7 +234,38 @@ export default function DynamicGradeSystem() {
 
   useEffect(() => {
     if (viewMode === 'school') setSelectedClass('All');
+    setSortConfig({ key: null, direction: 'desc' });
   }, [viewMode]);
+
+  // 點擊表頭排序處理函數
+  const handleSort = (key) => {
+    setSortConfig(prev => {
+      if (prev.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      // 科目與總分預設「由高到低(desc)」，排名、班級(座號)、姓名預設「由小到大(asc)」
+      const defaultAscKeys = ['classSeat', 'schoolRank', 'classRank', 'name'];
+      return { key, direction: defaultAscKeys.includes(key) ? 'asc' : 'desc' };
+    });
+  };
+
+  // 渲染排序圖示
+  const renderSortIcon = (key) => {
+    if (sortConfig.key !== key) {
+      return <ArrowUpDown className="w-3.5 h-3.5 inline-block ml-1 text-slate-300 opacity-70 group-hover:opacity-100 print:hidden" />;
+    }
+    return sortConfig.direction === 'asc' 
+      ? <ArrowUp className="w-3.5 h-3.5 inline-block ml-1 text-blue-600 print:hidden" />
+      : <ArrowDown className="w-3.5 h-3.5 inline-block ml-1 text-blue-600 print:hidden" />;
+  };
+
+  // 輔助：將班級與座號格式化為 2(01)
+  const formatClassSeat = (cls, seat) => {
+    if (seat === undefined || seat === null || seat === '') return String(cls || '');
+    const seatNum = parseInt(seat, 10);
+    const formattedSeat = !isNaN(seatNum) ? String(seatNum).padStart(2, '0') : String(seat);
+    return `${cls}(${formattedSeat})`;
+  };
 
   // --- 運算邏輯 ---
   const currentData = useMemo(() => database[currentExam] || [], [database, currentExam]);
@@ -327,8 +359,39 @@ export default function DynamicGradeSystem() {
          return { ...s, classRank: currentRank };
        });
     }
+
+    // 若使用者點擊了表頭欄位，進行自訂排序 (不影響已算好的班排與校排數字)
+    if (sortConfig.key) {
+      const { key, direction } = sortConfig;
+      const dir = direction === 'asc' ? 1 : -1;
+
+      data = [...data].sort((a, b) => {
+        if (key === 'classSeat') {
+          const classA = String(a.class || '');
+          const classB = String(b.class || '');
+          const clsCmp = classA.localeCompare(classB, undefined, { numeric: true });
+          if (clsCmp !== 0) return clsCmp * dir;
+          const seatA = Number(a.seat) || 0;
+          const seatB = Number(b.seat) || 0;
+          return (seatA - seatB) * dir;
+        }
+        if (key === 'name') {
+          return String(a.name || '').localeCompare(String(b.name || ''), 'zh-TW') * dir;
+        }
+        const valA = Number(a[key]) || 0;
+        const valB = Number(b[key]) || 0;
+        if (valA !== valB) return (valA - valB) * dir;
+        // 同分時，預設以班級與座號小到大排列
+        const classA = String(a.class || '');
+        const classB = String(b.class || '');
+        const clsCmp = classA.localeCompare(classB, undefined, { numeric: true });
+        if (clsCmp !== 0) return clsCmp;
+        return (Number(a.seat) || 0) - (Number(b.seat) || 0);
+      });
+    }
+
     return data;
-  }, [sortedData, viewMode, selectedClass]);
+  }, [sortedData, viewMode, selectedClass, sortConfig]);
 
   const classAnalysisData = useMemo(() => {
     const groups = {};
@@ -1104,23 +1167,114 @@ export default function DynamicGradeSystem() {
           /* --- 原有的總榜/班級列表 --- */
           <div className="table-container bg-white shadow rounded-xl overflow-hidden border border-slate-200 print:shadow-none print:border-black">
             <table className="w-full text-sm text-left">
-              <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200 print:bg-gray-100 print:text-black">
+              <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200 print:bg-gray-100 print:text-black select-none">
                 <tr>
-                  <th className="px-3 py-3 text-center w-24 whitespace-nowrap">{viewMode === 'school' ? '全校排名' : '班級排名'}</th>
+                  <th 
+                    onClick={() => handleSort(viewMode === 'school' ? 'schoolRank' : 'classRank')}
+                    className="px-3 py-3 text-center w-24 whitespace-nowrap cursor-pointer hover:bg-slate-200/70 transition-colors group"
+                    title="點擊依排名排序"
+                  >
+                    {viewMode === 'school' ? '全校排名' : '班級排名'}
+                    {renderSortIcon(viewMode === 'school' ? 'schoolRank' : 'classRank')}
+                  </th>
                   {viewMode === 'class' && (
-                    <th className="px-3 py-3 text-center w-24 whitespace-nowrap text-indigo-700 bg-indigo-50/40 print:bg-gray-100 print:text-black">全年級名次</th>
+                    <th 
+                      onClick={() => handleSort('schoolRank')}
+                      className="px-3 py-3 text-center w-24 whitespace-nowrap text-indigo-700 bg-indigo-50/40 print:bg-gray-100 print:text-black cursor-pointer hover:bg-indigo-100/60 transition-colors group"
+                      title="點擊依全年級名次排序"
+                    >
+                      全年級名次
+                      {renderSortIcon('schoolRank')}
+                    </th>
                   )}
-                  <th className="px-4 py-3">班級</th>
-                  <th className="px-4 py-3">姓名</th>
-                  <th className="px-4 py-3 text-right">總分</th>
-                  <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell">國文</th>
-                  <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell">英文</th>
-                  <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell">數學</th>
-                  <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell">自然</th>
-                  <th className="px-4 py-3 text-right hidden sm:table-cell print:table-cell text-blue-600">社會(均)</th>
-                  <th className="px-4 py-3 text-right hidden lg:table-cell print:table-cell text-slate-500">地理</th>
-                  <th className="px-4 py-3 text-right hidden lg:table-cell print:table-cell text-slate-500">歷史</th>
-                  <th className="px-4 py-3 text-right hidden lg:table-cell print:table-cell text-slate-500">公民</th>
+                  <th 
+                    onClick={() => handleSort('classSeat')}
+                    className="px-4 py-3 whitespace-nowrap cursor-pointer hover:bg-slate-200/70 transition-colors group"
+                    title="點擊依班級與座號由小到大排序"
+                  >
+                    班級(座號)
+                    {renderSortIcon('classSeat')}
+                  </th>
+                  <th 
+                    onClick={() => handleSort('name')}
+                    className="px-4 py-3 whitespace-nowrap cursor-pointer hover:bg-slate-200/70 transition-colors group"
+                    title="點擊依姓名排序"
+                  >
+                    姓名
+                    {renderSortIcon('name')}
+                  </th>
+                  <th 
+                    onClick={() => handleSort('total')}
+                    className="px-4 py-3 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 transition-colors group"
+                    title="點擊依總分高低排序"
+                  >
+                    總分
+                    {renderSortIcon('total')}
+                  </th>
+                  <th 
+                    onClick={() => handleSort('chi')}
+                    className="px-4 py-3 text-right hidden sm:table-cell print:table-cell whitespace-nowrap cursor-pointer hover:bg-slate-200/70 transition-colors group"
+                    title="點擊依國文成績高低排序"
+                  >
+                    國文
+                    {renderSortIcon('chi')}
+                  </th>
+                  <th 
+                    onClick={() => handleSort('eng')}
+                    className="px-4 py-3 text-right hidden sm:table-cell print:table-cell whitespace-nowrap cursor-pointer hover:bg-slate-200/70 transition-colors group"
+                    title="點擊依英文成績高低排序"
+                  >
+                    英文
+                    {renderSortIcon('eng')}
+                  </th>
+                  <th 
+                    onClick={() => handleSort('math')}
+                    className="px-4 py-3 text-right hidden sm:table-cell print:table-cell whitespace-nowrap cursor-pointer hover:bg-slate-200/70 transition-colors group"
+                    title="點擊依數學成績高低排序"
+                  >
+                    數學
+                    {renderSortIcon('math')}
+                  </th>
+                  <th 
+                    onClick={() => handleSort('sci')}
+                    className="px-4 py-3 text-right hidden sm:table-cell print:table-cell whitespace-nowrap cursor-pointer hover:bg-slate-200/70 transition-colors group"
+                    title="點擊依自然成績高低排序"
+                  >
+                    自然
+                    {renderSortIcon('sci')}
+                  </th>
+                  <th 
+                    onClick={() => handleSort('social')}
+                    className="px-4 py-3 text-right hidden sm:table-cell print:table-cell text-blue-600 whitespace-nowrap cursor-pointer hover:bg-blue-100/50 transition-colors group"
+                    title="點擊依社會平均高低排序"
+                  >
+                    社會(均)
+                    {renderSortIcon('social')}
+                  </th>
+                  <th 
+                    onClick={() => handleSort('geo')}
+                    className="px-4 py-3 text-right hidden lg:table-cell print:table-cell text-slate-500 whitespace-nowrap cursor-pointer hover:bg-slate-200/70 transition-colors group"
+                    title="點擊依地理成績高低排序"
+                  >
+                    地理
+                    {renderSortIcon('geo')}
+                  </th>
+                  <th 
+                    onClick={() => handleSort('hist')}
+                    className="px-4 py-3 text-right hidden lg:table-cell print:table-cell text-slate-500 whitespace-nowrap cursor-pointer hover:bg-slate-200/70 transition-colors group"
+                    title="點擊依歷史成績高低排序"
+                  >
+                    歷史
+                    {renderSortIcon('hist')}
+                  </th>
+                  <th 
+                    onClick={() => handleSort('civ')}
+                    className="px-4 py-3 text-right hidden lg:table-cell print:table-cell text-slate-500 whitespace-nowrap cursor-pointer hover:bg-slate-200/70 transition-colors group"
+                    title="點擊依公民成績高低排序"
+                  >
+                    公民
+                    {renderSortIcon('civ')}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 print:divide-gray-300">
@@ -1143,8 +1297,8 @@ export default function DynamicGradeSystem() {
                           {renderRankChange(student.rankChange, student.prevSchoolRank)}
                         </td>
                       )}
-                      <td className="px-4 py-3 font-medium text-slate-700">{student.class}</td>
-                      <td className="px-4 py-3 text-slate-600">{student.name}</td>
+                      <td className="px-4 py-3 font-medium text-slate-700 whitespace-nowrap">{formatClassSeat(student.class, student.seat)}</td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{student.name}</td>
                       <td className="px-4 py-3 text-right font-black text-slate-800">{student.total}</td>
                       <td className="px-4 py-3 text-right text-slate-400 hidden sm:table-cell print:table-cell print:text-black">{student.chi}</td>
                       <td className="px-4 py-3 text-right text-slate-400 hidden sm:table-cell print:table-cell print:text-black">{student.eng}</td>
